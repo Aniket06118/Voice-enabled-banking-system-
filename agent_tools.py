@@ -91,4 +91,30 @@ def get_payment_history() -> str:
     return json.dumps(history, indent=2)
 
 
-tool_box=[make_payment,get_payment_history]
+
+
+def load_user_details():
+    try:
+        with open(USER_DATA_FILE, "r") as f:
+            content = f.read().strip()
+            return json.loads(content) if content else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+@tool
+def get_user_details() -> str:
+    """Get the user's account details so you can answer questions about
+    their profile (e.g. name, bank account name/number, bank balance,
+    saved contacts, and similar info).
+
+    Use this whenever the user asks anything about their own account
+    info, balance, contacts, or personal/bank details.
+    """
+    details = load_user_details()
+
+    if not details:
+        return "No user details are available."
+
+    return json.dumps(details, indent=2)
+
+tool_box=[make_payment,get_payment_history,get_user_details]

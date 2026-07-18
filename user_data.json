@@ -3,13 +3,13 @@
     "name": "Aniket Sharma",
     "account_number": "123456789",
     "bank_name": "Lotus Bank",
-    "balance": 3450.0,
+    "balance": 2250.0,
     "currency": "INR",
     "phone": "9876543210"
   },
   "contacts": [
     {
-      "name": "Rahul",
+      "name": "Rahul Sharma",
       "upi_id": "rahul@upi"
     },
     {
@@ -19,6 +19,10 @@
     {
       "name": "Aman",
       "upi_id": "aman@upi"
+    },
+    {
+      "name": "Rahul verma",
+      "upi_id": "rahul@upi"
     }
   ],
   "transactions": []

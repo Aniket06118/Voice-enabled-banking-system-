@@ -1,11 +1,13 @@
 from langchain.agents import create_agent
 from agent_tools import tool_box
 from dotenv import load_dotenv
+import speech_recognition as sr
+import pyttsx3
 
 load_dotenv(override=True)
 
 
-SYSTEM_PROMPT="""
+SYSTEM_PROMPT = """
 You are a banking assistant. Your job is to understand the user's requests and call the correct tool: make_payment for sending money, or get_payment_history for questions about past payments.
 
 Rules:
@@ -21,20 +23,68 @@ Rules:
 
 """
 
-agent=create_agent(model="google_genai:gemini-2.5-flash",
-                   system_prompt=SYSTEM_PROMPT,
-                   tools=tool_box)
+agent = create_agent(model="google_genai:gemini-3.1-flash-lite",
+                      system_prompt=SYSTEM_PROMPT,
+                      tools=tool_box)
 
+# --- Voice setup ---
+recognizer = sr.Recognizer()
+
+
+def listen():
+    """Record from mic and convert speech to text."""
+    with sr.Microphone() as source:
+        print("Listening...")
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        audio = recognizer.listen(source)
+
+    try:
+        text = recognizer.recognize_google(audio)
+        print(f"You said: {text}")
+        return text
+    except sr.UnknownValueError:
+        print("Sorry, I didn't catch that.")
+        return None
+    except sr.RequestError as e:
+        print(f"STT error: {e}")
+        return None
+
+
+def extract_text(content):
+    """Pull plain text out of LangChain message content, which can be
+    a plain string or a list of content blocks (dicts with 'type'/'text')."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        ]
+        return " ".join(parts).strip()
+    return str(content)
+
+
+def speak(text):
+    """Convert text to speech and play it."""
+    print(text)
+    engine = pyttsx3.init()  # fresh instance each call avoids a pyttsx3/Windows bug
+    engine.say(text)
+    engine.runAndWait()
+    engine.stop()
 
 
 def main():
     conversation = []  # keeps full chat history across turns
 
-    print("Voice Banking Assistant (type 'exit' to quit)")
+    print("Voice Banking Assistant (say 'exit' to quit)")
     while True:
-        user_input = input("You: ").strip()
+        user_input = listen()
+        if user_input is None:
+            continue  # nothing understood, listen again
+
         if user_input.lower() in {"exit", "quit"}:
-            print("Goodbye!")
+            speak("Goodbye!")
             break
 
         conversation.append({"role": "user", "content": user_input})
@@ -43,7 +93,7 @@ def main():
 
         # result["messages"] is the full updated history (including tool calls)
         reply = result["messages"][-1]
-        print(f"Assistant: {reply.content}")
+        speak(extract_text(reply.content))
 
         # keep the full trace so the agent remembers earlier turns
         conversation = result["messages"]

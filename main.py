@@ -3,6 +3,13 @@ from agent_tools import tool_box
 from dotenv import load_dotenv
 import speech_recognition as sr
 import pyttsx3
+import numpy as np
+import os
+import soundfile as sf
+import torch
+import torchaudio
+from speechbrain.inference.speaker import EncoderClassifier
+from speechbrain.utils.fetching import LocalStrategy
 
 load_dotenv(override=True)
 
@@ -23,31 +30,33 @@ Rules:
 
 """
 
-agent = create_agent(model="google_genai:gemini-3.1-flash-lite",
+agent = create_agent(model="google_genai:gemini-2.5-flash",
                       system_prompt=SYSTEM_PROMPT,
                       tools=tool_box)
 
 # --- Voice setup ---
 recognizer = sr.Recognizer()
 
+PROFILE_PATH = "voice_profile.npy"
+SIMILARITY_THRESHOLD = 0.65
+MODEL_SAMPLE_RATE = 16000
 
-def listen():
-    """Record from mic and convert speech to text."""
-    with sr.Microphone() as source:
-        print("Listening...")
-        recognizer.adjust_for_ambient_noise(source, duration=0.5)
-        audio = recognizer.listen(source)
 
-    try:
-        text = recognizer.recognize_google(audio)
-        print(f"You said: {text}")
-        return text
-    except sr.UnknownValueError:
-        print("Sorry, I didn't catch that.")
-        return None
-    except sr.RequestError as e:
-        print(f"STT error: {e}")
-        return None
+def load_wav_as_tensor(path):
+    """Load a wav file and return a mono, 16kHz torch tensor,
+    without relying on speechbrain's load_audio (which has a buggy
+    lazy import of an unrelated 'k2' dependency)."""
+    audio, sample_rate = sf.read(path)
+    if audio.ndim > 1:  # convert stereo to mono if needed
+        audio = audio.mean(axis=1)
+
+    signal = torch.tensor(audio, dtype=torch.float32)
+
+    if sample_rate != MODEL_SAMPLE_RATE:
+        resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=MODEL_SAMPLE_RATE)
+        signal = resampler(signal)
+
+    return signal
 
 
 def extract_text(content):
@@ -74,10 +83,84 @@ def speak(text):
     engine.stop()
 
 
+def listen(save_path=None):
+    """Record from mic and convert speech to text. If save_path is given,
+    also saves the raw audio to that .wav file (used for voice verification)."""
+    with sr.Microphone() as source:
+        print("Listening...")
+        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+        audio = recognizer.listen(source)
+
+    if save_path:
+        with open(save_path, "wb") as f:
+            f.write(audio.get_wav_data())
+
+    try:
+        text = recognizer.recognize_google(audio)
+        print(f"You said: {text}")
+        return text
+    except sr.UnknownValueError:
+        print("Sorry, I didn't catch that.")
+        return None
+    except sr.RequestError as e:
+        print(f"STT error: {e}")
+        return None
+
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def verify_voice_from_file(classifier, wav_path):
+    """Compare a recorded wav file against the saved voice profile.
+    Returns True if it's likely the enrolled user, False otherwise."""
+    if not os.path.exists(PROFILE_PATH):
+        speak("No enrolled voice profile found. Please run enroll_voice.py first.")
+        return False
+
+    enrolled_embedding = np.load(PROFILE_PATH)
+
+    signal = load_wav_as_tensor(wav_path)
+    embedding = classifier.encode_batch(signal.unsqueeze(0))
+    embedding = embedding.squeeze().detach().numpy()
+
+    similarity = cosine_similarity(enrolled_embedding, embedding)
+    print(f"Voice similarity: {similarity:.4f}")
+
+    return similarity >= SIMILARITY_THRESHOLD
+
+
 def main():
+    print("Loading speaker verification model...")
+    classifier = EncoderClassifier.from_hparams(
+        source="speechbrain/spkrec-ecapa-voxceleb",
+        savedir="pretrained_models/spkrec-ecapa-voxceleb",
+        local_strategy=LocalStrategy.COPY,
+    )
+
     conversation = []  # keeps full chat history across turns
 
     print("Voice Banking Assistant (say 'exit' to quit)")
+
+    # First turn doubles as the voice verification sample
+    speak("Please say your request to begin.")
+    first_input = listen(save_path="verify_sample.wav")
+
+    if first_input is None:
+        speak("Sorry, I didn't catch that. Please try again.")
+        return
+
+    if not verify_voice_from_file(classifier, "verify_sample.wav"):
+        speak("Voice verification failed. This does not match the enrolled user. Stopping.")
+        return
+
+    # Verified — process their first request normally
+    conversation.append({"role": "user", "content": first_input})
+    result = agent.invoke({"messages": conversation})
+    reply = result["messages"][-1]
+    speak(extract_text(reply.content))
+    conversation = result["messages"]
+
     while True:
         user_input = listen()
         if user_input is None:

@@ -11,3 +11,7 @@ wheels/
 langgraph.json
 .langgraph_api/
 .env
+enroll_sample.wav
+voice_profile.npy
+verify_sample.wav
+pretrained_models/

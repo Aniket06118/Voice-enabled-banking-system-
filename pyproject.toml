@@ -16,7 +16,10 @@ dependencies = [
     "pyttsx3>=2.99",
     "sounddevice>=0.5.5",
     "soundfile>=0.14.0",
+    "speechbrain>=1.1.0",
     "speechrecognition>=3.17.0",
+    "torch>=2.13.0",
+    "torchaudio>=2.11.0",
     "uuid-utils==0.16.2",
     "webrtcvad-wheels>=2.0.14",
 ]

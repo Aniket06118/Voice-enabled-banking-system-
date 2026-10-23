@@ -61,11 +61,11 @@ def _spent_today(account) -> Decimal:
     return total or Decimal("0")
 
 
-# Common phonetic mappings for Indic scripts to English contact names (from Aniket)
+# Common phonetic mappings for Indic scripts to English contact names
 _INDIC_NAME_MAP = {
     # Hindi / Devanagari
     "राहुल": "rahul", "वर्मा": "verma", "वर्र्मा": "verma", "शर्मा": "sharma",
-    "अमन": "aman", "मॉम": "mom", "माँ": "mom", "मां": "mom", "माता": "mom", "अम्मी": "mom", "मम्मी": "mom",
+    "अमन": "aman", "मॉम": "mom", "माँ": "mom", "मां": "mom", "माता": "mom", "अम्मी": "mom",
     # Tamil
     "ராகுல்": "rahul", "வர்மா": "verma", "சர்மா": "sharma", "அமன்": "aman", "அம்மா": "mom",
     # Telugu
@@ -80,30 +80,36 @@ _INDIC_NAME_MAP = {
 def _normalize_name(name: str) -> str:
     """Normalize input name, translating any known Indic script words into Latin equivalents."""
     cleaned = " ".join(str(name or "").lower().split())
-    return " ".join(_INDIC_NAME_MAP.get(t, t) for t in cleaned.split())
+    tokens = []
+    for token in cleaned.split():
+        tokens.append(_INDIC_NAME_MAP.get(token, token))
+    return " ".join(tokens)
 
 
 def resolve_contact(account: Account, name: str) -> list:
-    """Find contacts matching a spoken name (English or Indian scripts).
+    """Find contacts matching a spoken name (supports English and Indic scripts).
+    Returns a list:
     0 items = not found, 1 = match, 2+ = ambiguous ("which Rahul?")."""
     raw_wanted = " ".join(str(name or "").lower().split())
     norm_wanted = _normalize_name(name)
     contacts = list(account.contacts.all())
 
-    for target in (norm_wanted, raw_wanted):          # 1. exact match
+    # 1. Exact match against normalized or raw name
+    for target in (norm_wanted, raw_wanted):
         exact = [c for c in contacts if c.name.lower() == target]
         if len(exact) == 1:
             return exact
 
-    def match(c, target):                              # 2. word / sub-token match
-        if not target:
-            return False
+    # 2. Word/sub-token match
+    def match(c, target):
         c_words = c.name.lower().split()
         t_words = target.split()
-        return (target in c.name.lower() or all(w in c_words for w in t_words)
-                or all(w in c.name.lower() for w in t_words))
+        return (target in c.name.lower() or
+                all(w in c_words for w in t_words) or
+                all(w in c.name.lower() for w in t_words))
 
-    return [c for c in contacts if match(c, norm_wanted) or match(c, raw_wanted)]
+    matches = [c for c in contacts if match(c, norm_wanted) or match(c, raw_wanted)]
+    return matches
 
 
 # ------------------------------------------------------------- step 1: initiate

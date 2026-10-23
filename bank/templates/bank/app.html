@@ -272,23 +272,28 @@
         <div class="card"><h2 style="margin-bottom:16px">Savings account</h2><dl class="dl" id="acctDetails"></dl></div>
         <div class="card"><h2 style="margin-bottom:16px">Today's spending</h2><div id="todayBox"></div><p style="color:var(--slate);margin:14px 0 0">The daily limit stops anyone from emptying your account in one day. Change it in Settings.</p></div>
       </div>
-      <div class="card" style="margin-top:18px"><div class="panel-head"><h2>People and billers you can pay</h2><button class="linkbtn" data-act="send">Send money</button></div><ul class="list" id="contactsList"></ul>
-        <form id="contactForm" class="form-grid" style="margin-top:16px;align-items:end" novalidate>
-          <div class="field" style="margin:0"><label for="cName">Add a person</label><input id="cName" placeholder="Name, like Sunita Aunty"></div>
-          <div class="field" style="margin:0"><label for="cUpi">UPI ID</label><input id="cUpi" placeholder="name@okbank" autocapitalize="off"></div>
-          <button class="primary" type="submit" style="grid-column:1/-1;margin-top:4px">Add contact</button><p class="err" id="cErr" role="alert" style="grid-column:1/-1"></p>
-        </form></div>
-    </section>
-
-    <!-- PAYMENTS & TRANSFERS -->
-    <section class="view hidden" data-view="payments">
-      <div class="hello"><h1>Payments and transfers</h1><p>Send money, pay bills and see every payment you've made.</p></div>
-      <div class="actions" style="margin-bottom:22px" id="payActions"></div>
-      <div class="card" id="statements">
-        <div class="panel-head"><h2>Statement</h2><button class="ghost" id="csvBtn">Download statement</button></div>
-        <div class="filters">
-          <input id="fWho" placeholder="Search by name, like Aman" aria-label="Search by name">
-          <select id="fDays" aria-label="Time period"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="">All time</option></select>
+      <div class="card">
+        <div class="opts">
+          <div>
+            <label for="lang">Language</label>
+            <select id="lang">
+              <option value="en-IN">English (India)</option>
+              <option value="hi-IN">Hindi</option>
+              <option value="ta-IN">Tamil</option>
+              <option value="te-IN">Telugu</option>
+              <option value="bn-IN">Bengali</option>
+              <option value="mr-IN">Marathi</option>
+              <option value="gu-IN">Gujarati</option>
+              <option value="kn-IN">Kannada</option>
+              <option value="ml-IN">Malayalam</option>
+              <option value="pa-IN">Punjabi</option>
+              <option value="od-IN">Odia</option>
+            </select>
+          </div>
+          <div>
+            <label for="speakOn">Spoken replies</label>
+            <select id="speakOn"><option value="1">On</option><option value="0">Off</option></select>
+          </div>
         </div>
         <p id="stmtTotal" style="margin:0 0 6px;color:var(--slate)"></p>
         <ul class="list" id="stmt"></ul>
@@ -821,10 +826,12 @@ function setLang(code) {
 
 async function send(text) {
   text = (text || "").trim(); if (!text || busy) return;
-  setAssistant(true);
-  busy = true; stopSpeaking(); addMsg("me", text); setAgent("thinking");
-  const t = typing(), t0 = performance.now();
-  const { status, data } = await api("/api/agent/chat/", "POST", { message: text, lang: lang() });
+  busy = true; stopSpeaking(); addMsg("me", text);
+  const t = typing();
+  const { status, data } = await api("/api/agent/chat/", "POST", {
+    message: text,
+    lang: $("#lang").value,
+  });
   t.remove(); busy = false;
   if (status === 401) { boot(); return; }
   if (status === 403 && data.code === "voice_required") { setAgent("ready"); addMsg("sys", "Please verify your voice first."); ensureVoice(); return; }
@@ -847,33 +854,171 @@ async function send(text) {
   else { setAgent("ready"); speak(reply, () => { if ($("#handsFree").checked) startListening(); }); }
 }
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#text").value; $("#text").value = ""; send(v); });
+$("#lang").addEventListener("change", async () => {
+  stopSpeaking();
+  await api("/api/agent/reset/", "POST");
+  addMsg("sys", "Language switched to " + $("#lang").selectedOptions[0].text);
+});
 
-/* ---------------- speech: listening ----------------
-   English: the browser's own recogniser (streams words as you talk, no upload).
-   Indian languages: Sarvam (much better at Hindi, Tamil, Telugu...).
-   Recording stops ~0.7 s after you stop talking. */
+async function loadHistory() {
+  const { status, data } = await api("/api/history/?limit=6");
+  if (status !== 200) return;
+  const ul = $("#tx"); ul.innerHTML = "";
+  if (!data.payments.length) { ul.innerHTML = '<li><small>No payments yet</small></li>'; return; }
+  for (const p of data.payments) {
+    const li = document.createElement("li");
+    const left = document.createElement("div");
+    left.textContent = p.recipient;
+    const sm = document.createElement("small");
+    sm.textContent = new Date(p.timestamp).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    left.appendChild(sm);
+    const right = document.createElement("div");
+    right.className = "out" + (p.status === "Success" ? "" : " bad");
+    right.textContent = (p.status === "Success" ? "−" : "✕ ") + rupees(p.amount);
+    li.append(left, right); ul.appendChild(li);
+  }
+}
+
+/* ---------------- speech: listening (Sarvam STT with browser fallback) ---- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, mediaRec = null, listening = false, finalText = "", micStream = null, SARVAM = false;
-function useSarvamSTT() { const e = $("#engine").value; if (!SARVAM || e === "browser") return false; return e === "sarvam" || lang() !== "en-IN" || !SR; }
-function useSarvamTTS() { const e = $("#engine").value; if (!SARVAM || e === "browser") return false; return e === "sarvam" || lang() !== "en-IN" || !("speechSynthesis" in window); }
+let mediaRec = null, listening = false, finalText = "";
+let _vadHandler = null;
+
 function setListening(on) {
-  listening = on; $("#mic").classList.toggle("live", on);
-  if (on) setAgent("listening"); else { if (!busy && $("#state").dataset.s === "listening") setAgent("ready"); }
+  listening = on;
+  $("#mic").classList.toggle("live", on);
+  if (!on) $("#heard").textContent = "";
 }
-function blocked() {
-  return busy || !$("#pinOverlay").classList.contains("hidden") || !$("#voiceOverlay").classList.contains("hidden") || $("#sheetBg");
+
+// ── Voice Activity Detection (auto-stop when silence detected) ───────────
+function attachVAD(stream, onDone) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    let speechDetected = false;
+    let silenceStart = null;
+    const SILENCE_MS = 1400; // 1.4 seconds of silence triggers auto-stop
+    const THRESHOLD = 16;    // Volume threshold
+
+    const interval = setInterval(() => {
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i];
+      const avg = sum / data.length;
+
+      if (avg > THRESHOLD) {
+        speechDetected = true;
+        silenceStart = null;
+        $("#heard").textContent = "Listening…";
+      } else if (speechDetected) {
+        const now = Date.now();
+        if (!silenceStart) {
+          silenceStart = now;
+        } else if (now - silenceStart >= SILENCE_MS) {
+          clearInterval(interval);
+          try { ctx.close(); } catch (_) {}
+          onDone();
+        }
+      }
+    }, 60);
+
+    return {
+      stop: () => {
+        clearInterval(interval);
+        try { ctx.close(); } catch (_) {}
+      }
+    };
+  } catch (e) {
+    return { stop: () => {} };
+  }
 }
+
+// ── Sarvam STT via MediaRecorder ──────────────────────────────────────────
+async function sarvamSTT(blob) {
+  const formData = new FormData();
+  formData.append("audio", blob, "audio.webm");
+  formData.append("lang", $("#lang").value);
+  const res = await fetch("/api/voice/stt/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-CSRFToken": csrf() },
+    body: formData,
+  });
+  const data = await res.json();
+  if (data.ok && data.transcript) return data.transcript;
+  return null;
+}
+
 function startListening() {
-  if (listening || blocked()) return;
-  setAssistant(true); stopSpeaking(); finalText = "";
-  if (useSarvamSTT()) sarvamListen(); else browserListen();
+  if (listening || busy || !$("#pinOverlay").classList.contains("hidden")) return;
+  stopSpeaking();
+
+  // --- Try Sarvam STT via MediaRecorder first ---
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      const chunks = [];
+      mediaRec = new MediaRecorder(stream);
+      mediaRec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      mediaRec.onstart = () => {
+        setListening(true);
+        $("#heard").textContent = "Listening…";
+        // Start voice activity detection for automatic silence detection
+        _vadHandler = attachVAD(stream, () => {
+          if (mediaRec && mediaRec.state === "recording") {
+            mediaRec.stop();
+          }
+        });
+        // Hard safety timeout: 25s
+        clearTimeout(window._recAutoStopTimer);
+        window._recAutoStopTimer = setTimeout(() => {
+          if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
+        }, 25000);
+      };
+      mediaRec.onstop = async () => {
+        clearTimeout(window._recAutoStopTimer);
+        if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
+        setListening(false);
+        stream.getTracks().forEach(t => t.stop());
+        $("#heard").textContent = "Processing…";
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const transcript = await sarvamSTT(blob);
+        $("#heard").textContent = "";
+        if (transcript) {
+          send(transcript);
+        } else {
+          addMsg("sys", "Could not understand audio. Please try again or type.");
+        }
+      };
+      mediaRec.onerror = () => {
+        if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
+        setListening(false);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mediaRec.start();
+    }).catch((err) => {
+      // Microphone not allowed / unavailable – fall back to browser SR
+      fallbackSTT();
+    });
+    return;
+  }
+  // --- Browser SR fallback ---
+  fallbackSTT();
 }
-function browserListen() {
-  if (!SR) { if (SARVAM) return sarvamListen(); addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
-  rec = new SR(); rec.lang = lang(); rec.interimResults = true; rec.continuous = false;
+
+function fallbackSTT() {
+  if (!SR) { addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
+  finalText = "";
+  const rec = new SR();
+  rec.lang = $("#lang").value; rec.interimResults = true; rec.continuous = false;
   rec.onresult = (e) => {
     let t = ""; for (const r of e.results) t += r[0].transcript;
-    $("#heard").textContent = "“" + t + "”"; robotLevel(0.5);
+    $("#heard").textContent = "\u201c" + t + "\u201d";
     if (e.results[e.results.length - 1].isFinal) finalText = t;
   };
   rec.onerror = (e) => {
@@ -884,89 +1029,80 @@ function browserListen() {
   rec.onend = () => { setListening(false); robotLevel(0); $("#heard").textContent = ""; if (finalText) send(finalText); };
   try { rec.start(); setListening(true); } catch (e) { setListening(false); }
 }
-async function sarvamListen() {
-  try {
-    if (!micStream || !micStream.active) micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  } catch (e) { addMsg("sys", "Please allow microphone access in your browser."); return; }
-  const type = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
-  const chunks = []; mediaRec = new MediaRecorder(micStream, type ? { mimeType: type } : undefined);
-  const ctx = new (window.AudioContext || window.webkitAudioContext)(), an = ctx.createAnalyser(); an.fftSize = 512;
-  ctx.createMediaStreamSource(micStream).connect(an);
-  const buf = new Uint8Array(an.fftSize); let spoke = false, quietSince = 0, floor = null, seen = 0, gate = 0.03; const t0 = performance.now();
-  const timer = setInterval(() => {
-    an.getByteTimeDomainData(buf); let s = 0; for (const v of buf) s += (v - 128) * (v - 128);
-    const rms = Math.sqrt(s / buf.length) / 128, now = performance.now();
-    robotLevel(Math.min(1, rms * 8));
-    if (seen < 5) {                       // first ~250 ms: measure the room's background noise
-      floor = floor === null ? rms : Math.min(floor, rms); seen++;
-      gate = Math.min(Math.max(floor * 3, 0.02), 0.06); return;
-    }
-    if (rms > gate) { spoke = true; quietSince = 0; $("#heard").textContent = "Listening…"; }
-    else if (spoke && !quietSince) quietSince = now;
-    if ((spoke && quietSince && now - quietSince > 700) || now - t0 > 15000 || (!spoke && now - t0 > 7000)) stop();
-  }, 50);
-  function stop() { clearInterval(timer); try { ctx.close(); } catch (e) {} if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }
-  mediaRec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  mediaRec.onstop = async () => {
-    setListening(false); robotLevel(0);
-    if (!spoke) { $("#heard").textContent = ""; return; }
-    setAgent("thinking"); $("#heard").textContent = "Understanding…";
-    const fd = new FormData(); fd.append("audio", new Blob(chunks, { type: type || "audio/webm" }), "speech.webm"); fd.append("lang", lang());
-    const res = await fetch("/api/voice/stt/", { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": csrf() }, body: fd });
-    const d = await res.json().catch(() => ({}));
-    $("#heard").textContent = "";
-    if (d.ok && d.transcript) send(d.transcript);
-    else if (d.code === "sarvam_unavailable") { SARVAM = false; setAgent("ready"); addMsg("sys", "Indian-language speech isn't set up on the server yet, so I'll use the browser instead."); }
-    else { setAgent("ready"); addMsg("sys", d.message || "I couldn't hear that clearly. Please try again."); }
-  };
-  mediaRec.start(); setListening(true); $("#heard").textContent = "Listening…";
-  window._stopRec = stop;
-}
+
 $("#mic").addEventListener("click", () => {
-  if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
-  else startListening();
+  if (listening) {
+    if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
+    // stop whichever recorder is active
+    if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
+    else setListening(false);
+  } else {
+    startListening();
+  }
 });
 
-/* ---------------- speech: speaking ---------------- */
-let player = null, playerCtx = null, playerAn = null, speakTimer = null;
-function speak(text, onend) {
-  const done = () => { clearInterval(speakTimer); robotLevel(0); if ($("#state").dataset.s === "speaking") setAgent("ready"); if (onend) onend(); };
-  if ($("#speakOn").value !== "1") { if (onend) onend(); return; }
-  stopSpeaking(); setAgent("speaking");
-  if (useSarvamTTS()) sarvamSpeak(text, done); else browserSpeak(text, done);
+/* ---------------- speech: speaking (Sarvam TTS with browser fallback) ----- */
+let _audioCtx = null;
+let _sarvamSource = null;   // current AudioBufferSourceNode, to allow cancellation
+
+function getAudioCtx() {
+  if (!_audioCtx || _audioCtx.state === "closed") {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return _audioCtx;
 }
-function browserSpeak(text, done) {
-  if (!("speechSynthesis" in window)) { done(); return; }
-  const u = new SpeechSynthesisUtterance(text.replace(/₹\s?/g, "rupees "));
-  u.lang = lang(); u.rate = 0.98;
-  const v = speechSynthesis.getVoices().find(v => v.lang === lang()) || speechSynthesis.getVoices().find(v => v.lang.startsWith(lang().slice(0, 2)));
-  if (v) u.voice = v;
-  u.onend = done; u.onerror = done;
-  speakTimer = setInterval(() => robotLevel(0.25 + Math.random() * 0.6), 110);
-  speechSynthesis.speak(u);
-}
-async function sarvamSpeak(text, done) {
+
+async function sarvamTTS(text, lang, onend) {
+  // Never send a PIN or empty string to TTS
+  if (!text || text.length > 1000) { if (onend) onend(); return false; }
   try {
-    const r = await api("/api/voice/tts/", "POST", { text, language_code: lang() });
-    if (!r.data.ok) throw new Error(r.data.code);
-    const bytes = Uint8Array.from(atob(r.data.audio_b64), c => c.charCodeAt(0));
-    if (!player) {
-      player = new Audio();
-      try { playerCtx = new (window.AudioContext || window.webkitAudioContext)(); playerAn = playerCtx.createAnalyser(); playerAn.fftSize = 256;
-            playerCtx.createMediaElementSource(player).connect(playerAn); playerAn.connect(playerCtx.destination); } catch (e) { playerAn = null; }
-    }
-    if (playerCtx && playerCtx.state === "suspended") await playerCtx.resume();
-    player.src = URL.createObjectURL(new Blob([bytes], { type: r.data.mime || "audio/wav" }));
-    player.onended = done; player.onerror = done;
-    const lv = new Uint8Array(128);
-    speakTimer = setInterval(() => { if (!playerAn) return robotLevel(0.4 + Math.random() * 0.4); playerAn.getByteTimeDomainData(lv);
-      let s = 0; for (const x of lv) s += Math.abs(x - 128); robotLevel(Math.min(1, s / lv.length / 25)); }, 60);
-    await player.play();
-  } catch (e) { clearInterval(speakTimer); if (e && e.message === "sarvam_unavailable") SARVAM = false; browserSpeak(text, done); }
+    const res = await fetch("/api/voice/tts/", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+      body: JSON.stringify({ text, language_code: lang }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.audio_b64) return false;
+
+    // Decode base64 WAV and play via Web Audio API
+    const raw = atob(data.audio_b64);
+    const buf = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+
+    const ctx = getAudioCtx();
+    const audioBuf = await ctx.decodeAudioData(buf.buffer);
+    if (_sarvamSource) { try { _sarvamSource.stop(); } catch(e) {} }
+    _sarvamSource = ctx.createBufferSource();
+    _sarvamSource.buffer = audioBuf;
+    _sarvamSource.connect(ctx.destination);
+    _sarvamSource.onended = () => { _sarvamSource = null; if (onend) onend(); };
+    _sarvamSource.start(0);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
+
+async function speak(text, onend) {
+  if ($("#speakOn").value !== "1") { if (onend) onend(); return; }
+  const lang = $("#lang").value;
+  // Try Sarvam TTS first
+  const ok = await sarvamTTS(text, lang, onend);
+  if (!ok) {
+    // Browser speechSynthesis fallback
+    if (!("speechSynthesis" in window)) { if (onend) onend(); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.replace(/\u20b9\s?/g, "rupees "));
+    u.lang = lang; u.rate = 1.0;
+    u.onend = () => { if (onend) onend(); };
+    u.onerror = () => { if (onend) onend(); };
+    speechSynthesis.speak(u);
+  }
+}
+
 function stopSpeaking() {
-  clearInterval(speakTimer);
-  if (player) { try { player.pause(); } catch (e) {} }
+  if (_sarvamSource) { try { _sarvamSource.stop(); } catch(e) {} _sarvamSource = null; }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
 }
 

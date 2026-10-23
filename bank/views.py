@@ -1,9 +1,8 @@
 """JSON API used by the website (and anything else that wants to talk to the bank)."""
+import base64
 import json
-import secrets
-import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+import logging
+import os
 from functools import wraps
 
 from django.conf import settings
@@ -17,6 +16,8 @@ from django.views.decorators.http import require_GET, require_POST
 
 from . import agent, intents, services, voice
 from .models import Account, VoiceProfile
+
+log = logging.getLogger(__name__)
 
 ERROR_STATUS = {
     "payment_not_found": 404,
@@ -229,34 +230,22 @@ def _remember(request, role: str, content: str):
 @api_login_required
 @voice_required
 def agent_chat(request):
-    """One turn with the banking agent (typed text or the transcript of speech).
-    Common requests are answered instantly (bank/intents.py); everything else
-    goes to the AI agent. Both paths use the same services.py money rules."""
-    t0 = time.perf_counter()
+    """One turn with the banking agent (typed text or the transcript of speech)."""
     body = _body(request)
     message = str(body.get("message", "")).strip()[:500]
     lang = str(body.get("lang", "en-IN")).strip() or "en-IN"
-    if lang not in agent.LANG_MAP:
-        lang = "en-IN"
     if not message:
         return JsonResponse({"ok": False, "code": "empty",
                              "message": "I didn't catch that."}, status=400)
     account = request.user.account
 
-    # A new language starts a fresh conversation (older turns would pull the model back).
-    if request.session.get("chat_lang") not in (None, lang):
+    # If the user changed language, clear older turns in the other language
+    last_lang = request.session.get("chat_lang")
+    if last_lang and last_lang != lang:
         request.session["chat"] = []
     request.session["chat_lang"] = lang
 
-    out = intents.handle(account, message, lang, request.session)
-    source = "instant"
-    if out is None:
-        out = agent.run_chat(account, request.session.get("chat", []), message, lang=lang)
-        source = "ai"
-    ui = out.get("ui") or []
-    for item in ui:
-        if item.get("type") == "analysis":
-            request.session["last_analysis"] = item["url"]
+    out = agent.run_chat(account, request.session.get("chat", []), message, lang=lang)
     _remember(request, "user", message)
     _remember(request, "assistant", out["reply"])
     analysis = next(({"id": u["id"], "url": u["url"], "title": u["title"]} for u in ui if u.get("type") == "analysis"), None)
@@ -276,354 +265,106 @@ def agent_reset(request):
     return JsonResponse({"ok": True})
 
 
-# ------------------------------------------------------------ voice security
-
-VOICE_LOCK_AFTER = 5            # failed attempts before a short pause
-VOICE_LOCK_MINUTES = 2
-CHALLENGE_SECONDS = 60
-CHALLENGE_DIGITS = 6            # read aloud when logging in
-ENROLL_DIGITS = 8               # longer clips when teaching the voice: much better accuracy
-ENROLL_SAMPLES = 3
-MIN_CONSISTENCY = 0.40          # the 3 enrollment clips must sound like one person
-CONFIDENT_MARGIN = 0.10         # "clearly the owner": forgives one misheard digit
-LEARN_MARGIN = 0.15             # only very clean logins refine the saved voiceprint (prevents drift)
-MAX_AUDIO_BYTES = 1_500_000
-
-_pool = ThreadPoolExecutor(max_workers=4)   # lets the speaker check and the digit check run together
-
-FAIL_MESSAGES = {
-    "voice_mismatch": "I couldn't match your voice. Speak a little closer to the mic, in your normal voice.",
-    "phrase_mismatch": "I heard your voice, but not those digits. Please read the new digits clearly.",
-}
-
-
-def _voice_problem(exc: voice.VoiceError) -> JsonResponse:
-    status = 503 if exc.code in ("engine_missing", "stt_unavailable") else 400
-    return JsonResponse({"ok": False, "code": exc.code, "message": exc.message,
-                         "fallback_pin": exc.code in ("engine_missing", "stt_unavailable")},
-                        status=status)
-
-
-def _read_audio(request, expected: int):
-    files = request.FILES.getlist("audio")
-    if len(files) != expected:
-        raise voice.VoiceError("audio_invalid", f"Expected {expected} recording(s).")
-    out = []
-    for f in files:
-        if f.size > MAX_AUDIO_BYTES:
-            raise voice.VoiceError("audio_too_long", "That recording was too long.")
-        out.append(f.read())
-    return out
-
-
-@require_GET
-@api_login_required
-def voice_status(request):
-    account = request.user.account
-    if settings.VOICE_REQUIRED:
-        voice.warm_up()   # start loading the model while the user reads the screen
-    return JsonResponse({
-        "ok": True,
-        "required": settings.VOICE_REQUIRED,
-        "verified": _voice_verified(request),
-        "enrolled": VoiceProfile.objects.filter(account=account).exists(),
-        "engine_available": voice.engine_available(),
-        "sarvam": bool(__import__("os").getenv("SARVAM_API_KEY")),
-    })
-
-
-@require_GET
-@api_login_required
-def voice_challenge(request):
-    """Random digits to read aloud. Fresh every time, short-lived, single use."""
-    try:
-        n = min(max(int(request.GET.get("n", CHALLENGE_DIGITS)), 4), ENROLL_DIGITS)
-    except ValueError:
-        n = CHALLENGE_DIGITS
-    digits = "".join(secrets.choice("0123456789") for _ in range(n))
-    request.session["voice_challenge"] = {"digits": digits, "exp": time.time() + CHALLENGE_SECONDS}
-    return JsonResponse({"ok": True, "digits": digits, "spoken": " ".join(digits)})
-
-
-@require_POST
-@api_login_required
-def voice_enroll(request):
-    """Save the owner's voiceprint from 3 recordings."""
-    account = request.user.account
-    profile = VoiceProfile.objects.filter(account=account).first()
-    if profile is not None:
-        # Changing an existing voiceprint needs proof: a live voice check this session,
-        # or the account PIN. The password alone is not enough.
-        by_voice = _voice_verified(request) and request.session.get("voice_method") == "voice"
-        if not by_voice:
-            pin = request.POST.get("pin")
-            if not pin:
-                return JsonResponse({"ok": False, "code": "voice_required",
-                                     "message": "Verify your current voice or enter your PIN first."},
-                                    status=403)
-            checked = services.verify_pin(account, pin)
-            if not checked["ok"]:
-                return _respond(checked)
-    try:
-        embeddings = []
-        for raw in _read_audio(request, ENROLL_SAMPLES):
-            samples = voice.decode_wav(raw)
-            voice.check_quality(samples)
-            embeddings.append(voice.embed_signal(voice.prepare(samples)))
-        mean = voice.mean_embedding(embeddings)
-        if voice.consistency(embeddings) < MIN_CONSISTENCY:
-            raise voice.VoiceError("samples_inconsistent",
-                                   "The three recordings didn't sound like the same person. "
-                                   "Please try again in a quiet place.")
-    except voice.VoiceError as exc:
-        return _voice_problem(exc)
-
-    threshold = voice.personal_threshold(embeddings, settings.VOICE_THRESHOLD_CAP)
-    VoiceProfile.objects.update_or_create(
-        account=account,
-        defaults={"embedding": mean, "samples": ENROLL_SAMPLES, "threshold": threshold,
-                  "failed_attempts": 0, "locked_until": None})
-    _mark_verified(request, "voice")
-    services._audit(account, "voice_enrolled", samples=ENROLL_SAMPLES, threshold=threshold)
-    return JsonResponse({"ok": True, "code": "enrolled",
-                         "message": "Your voice is saved. You're verified."})
-
-
-@require_POST
-@api_login_required
-def voice_verify(request):
-    """Check speaker + liveness (random digits) and unlock the session."""
-    account = request.user.account
-    profile = VoiceProfile.objects.filter(account=account).first()
-    if profile is None:
-        return JsonResponse({"ok": False, "code": "not_enrolled",
-                             "message": "Please set up your voice first."}, status=400)
-    now = timezone.now()
-    if profile.locked_until and profile.locked_until > now:
-        secs = int((profile.locked_until - now).total_seconds()) + 1
-        return JsonResponse({"ok": False, "code": "voice_locked", "fallback_pin": True,
-                             "message": f"Let's pause for {secs} seconds. You can use your PIN instead."},
-                            status=423)
-
-    challenge = request.session.pop("voice_challenge", None)   # single use
-    if not challenge or challenge["exp"] < time.time():
-        return JsonResponse({"ok": False, "code": "challenge_expired",
-                             "message": "That took too long. Please try again."}, status=400)
-
-    threshold = profile.threshold or voice.DEFAULT_THRESHOLD
-
-    def fail(code, similarity):
-        profile.failed_attempts += 1
-        if profile.failed_attempts >= VOICE_LOCK_AFTER:
-            profile.locked_until = now + timedelta(minutes=VOICE_LOCK_MINUTES)
-            profile.failed_attempts = 0
-        profile.save()
-        services._audit(account, "voice_failed", reason=code,
-                        similarity=round(similarity, 3), threshold=threshold)
-        body = {"ok": False, "code": code, "message": FAIL_MESSAGES[code], "fallback_pin": True}
-        if settings.DEBUG:
-            body["debug_similarity"] = round(similarity * 100)
-        return JsonResponse(body, status=400)
-
-    stt = None
-    try:
-        raw = _read_audio(request, 1)[0]
-        samples = voice.decode_wav(raw)
-        voice.check_quality(samples)
-        clean = voice.prepare(samples)
-        stt = _pool.submit(voice.transcribe_digits, raw)      # runs while we compare voices
-        emb = voice.embed_signal(clean)
-        similarity = voice.cosine(profile.embedding, emb)
-        if similarity < threshold:
-            stt.cancel()
-            return fail("voice_mismatch", similarity)
-        spoken = stt.result()
-    except voice.VoiceError as exc:
-        if stt is not None:
-            stt.cancel()
-        return _voice_problem(exc)
-
-    confident = similarity >= threshold + CONFIDENT_MARGIN
-    exact = spoken == challenge["digits"]
-    if not (exact or (confident and voice.digits_close(spoken, challenge["digits"]))):
-        return fail("phrase_mismatch", similarity)
-
-    profile.failed_attempts, profile.locked_until = 0, None
-    if exact and similarity >= threshold + LEARN_MARGIN:   # keep fitting this person's real mic and voice
-        profile.embedding = voice.blend(profile.embedding, emb, max(profile.samples, 8))
-        profile.samples = min(profile.samples + 1, 30)
-    profile.save()
-    _mark_verified(request, "voice")
-    services._audit(account, "voice_verified", similarity=round(similarity, 3), threshold=threshold)
-    body = {"ok": True, "code": "verified", "message": "Voice verified."}
-    if settings.DEBUG:
-        body["debug_similarity"] = round(similarity * 100)
-    return JsonResponse(body)
-
-
-@require_POST
-@api_login_required
-def voice_fallback(request):
-    """Backup way in when the voice check can't be passed (noisy room, mic trouble,
-    speech service down): the account PIN. Same wrong-PIN lockout as payments."""
-    account = request.user.account
-    result = services.verify_pin(account, _body(request).get("pin"))
-    if not result["ok"]:
-        return _respond(result)
-    _mark_verified(request, "pin")
-    services._audit(account, "voice_fallback_pin")
-    return JsonResponse({"ok": True, "code": "verified", "message": "PIN accepted. You're in."})
-
-
-# ------------------------------------------------- Sarvam speech (from Aniket)
-
-import base64 as _b64  # noqa: E402
-import logging as _logging  # noqa: E402
-import os as _os  # noqa: E402
-
-_log = _logging.getLogger(__name__)
-SARVAM_SPEAKER = _os.getenv("SARVAM_TTS_SPEAKER", "shubh_enhi_ads")
-
-
-def sarvam_ready() -> bool:
-    return bool(_os.getenv("SARVAM_API_KEY"))
-
+# ---------------------------------------------------------------- Sarvam voice
 
 def _sarvam_client():
+    """Return a SarvamAI client using the key from the environment."""
     from sarvamai import SarvamAI
-    return SarvamAI(api_subscription_key=_os.environ["SARVAM_API_KEY"])
-
-
-def _sarvam_down(msg="Indian-language speech is not set up on the server.") -> JsonResponse:
-    return JsonResponse({"ok": False, "code": "sarvam_unavailable", "message": msg}, status=503)
+    key = os.environ.get("SARVAM_API_KEY", "")
+    if not key:
+        raise RuntimeError("SARVAM_API_KEY environment variable is not set.")
+    return SarvamAI(api_subscription_key=key)
 
 
 @require_POST
 @api_login_required
 def voice_stt(request):
-    """Speech -> text with Sarvam (saaras:v4). Audio is forwarded and discarded,
-    never stored or logged. The user's contact names are sent as hints so names
-    like "Rahul Verma" are recognised more reliably."""
-    if not sarvam_ready():
-        return _sarvam_down()
-    audio = request.FILES.get("audio")
-    if audio is None or audio.size > MAX_AUDIO_BYTES * 4:
-        return JsonResponse({"ok": False, "code": "no_audio", "message": "No audio received."}, status=400)
+    """
+    POST multipart/form-data with:
+        audio   – the recorded audio file (any format Sarvam accepts: webm, wav, mp3…)
+        lang    – BCP-47 code e.g. hi-IN  (optional; Sarvam auto-detects if omitted)
+
+    Returns: {"ok": true, "transcript": "...", "language_code": "hi-IN"}
+
+    Safety: the raw audio bytes are forwarded directly to Sarvam and discarded.
+    They are NEVER written to disk or logged.
+    """
+    audio_file = request.FILES.get("audio")
+    if audio_file is None:
+        return JsonResponse({"ok": False, "code": "no_audio",
+                             "message": "No audio file received."}, status=400)
+
     lang = request.POST.get("lang", "").strip() or None
-    data = audio.read()
-    args = {"file": (audio.name or "audio.webm", data, audio.content_type or "audio/webm"),
-            "model": "saaras:v4", "mode": "transcribe"}
-    if lang:
-        args["language_code"] = lang
-    names = [c.name for c in request.user.account.contacts.all()][:30]
     try:
         client = _sarvam_client()
-        try:
-            resp = client.speech_to_text.transcribe(**args, keyterms=names)
-        except Exception:  # noqa: BLE001  older API versions may not accept keyterms
-            resp = client.speech_to_text.transcribe(**args)
-        return JsonResponse({"ok": True, "transcript": resp.transcript or "",
-                             "language_code": resp.language_code or lang or "en-IN"})
-    except Exception:  # noqa: BLE001
-        _log.exception("Sarvam STT failed")
+        transcribe_args = {
+            "file": (audio_file.name or "audio.webm", audio_file, audio_file.content_type),
+            "model": "saaras:v4",
+            "mode": "transcribe",
+        }
+        if lang:
+            transcribe_args["language_code"] = lang
+        response = client.speech_to_text.transcribe(**transcribe_args)
+        return JsonResponse({
+            "ok": True,
+            "transcript": response.transcript or "",
+            "language_code": response.language_code or lang or "en-IN",
+        })
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Sarvam STT failed")
         return JsonResponse({"ok": False, "code": "stt_error",
-                             "message": "I couldn't hear that clearly. Please try again."}, status=502)
+                             "message": str(exc)}, status=502)
 
 
 @require_POST
 @api_login_required
 def voice_tts(request):
-    """Text -> speech with Sarvam (bulbul:v4-flash). The text is the AGENT'S reply
-    (never a PIN). MP3 is requested because it is ~10x smaller than WAV, so the
-    voice starts sooner; repeated phrases come from Sarvam's cache."""
-    if not sarvam_ready():
-        return _sarvam_down()
+    """
+    POST JSON: {"text": "...", "language_code": "hi-IN"}
+
+    Returns: {"ok": true, "audio_b64": "<base64 WAV>"}
+
+    Safety: the text sent here is the AGENT'S reply, not the user's speech.
+    The PIN pad bypass in the UI ensures PIN digits are never in this text.
+    Audio bytes are returned directly and never stored.
+    """
     data = _body(request)
     text = str(data.get("text", "")).strip()[:1000]
     lang = str(data.get("language_code", "en-IN")).strip() or "en-IN"
+
     if not text:
-        return JsonResponse({"ok": False, "code": "no_text", "message": "No text to speak."}, status=400)
-    base = {"text": text, "model": "bulbul:v4-flash", "language_code": lang, "speaker": SARVAM_SPEAKER}
+        return JsonResponse({"ok": False, "code": "no_text",
+                             "message": "No text to speak."}, status=400)
+
+    # Map language code to a reasonable default Bulbul v4-flash speaker.
+    # If the language is not in the map we fall back to the default persona.
+    _SPEAKER_MAP = {
+        "hi-IN": "shubh_enhi_ads",
+        "en-IN": "shubh_enhi_ads",
+        "ta-IN": "shubh_enhi_ads",
+        "te-IN": "shubh_enhi_ads",
+        "bn-IN": "shubh_enhi_ads",
+        "mr-IN": "shubh_enhi_ads",
+        "gu-IN": "shubh_enhi_ads",
+        "kn-IN": "shubh_enhi_ads",
+        "ml-IN": "shubh_enhi_ads",
+        "pa-IN": "shubh_enhi_ads",
+        "od-IN": "shubh_enhi_ads",
+    }
+    speaker = _SPEAKER_MAP.get(lang, "shubh_enhi_ads")
+
     try:
         client = _sarvam_client()
-        try:
-            resp = client.text_to_speech.convert(**base, output_audio_codec="mp3", speech_sample_rate=22050,
-                                                 enable_cached_responses=True)
-            mime = "audio/mpeg"
-        except Exception:  # noqa: BLE001  fall back to Aniket's tested settings
-            resp = client.text_to_speech.convert(**base, speech_sample_rate=22050)
-            mime = "audio/wav"
-        return JsonResponse({"ok": True, "audio_b64": "".join(resp.audios), "mime": mime})
-    except Exception:  # noqa: BLE001
-        _log.exception("Sarvam TTS failed")
-        return JsonResponse({"ok": False, "code": "tts_error", "message": "Voice reply unavailable."}, status=502)
-
-
-# ---------------------------------------------------------------- sign up
-
-@ensure_csrf_cookie
-def signup_page(request):
-    if request.user.is_authenticated and hasattr(request.user, "account"):
-        return redirect("/app/")
-    return render(request, "bank/signup.html")
-
-
-@require_POST
-def signup(request):
-    d = _body(request)
-    result = services.create_customer(d.get("full_name"), d.get("phone"), d.get("password"), d.get("pin"))
-    if not result["ok"]:
-        return _respond(result)
-    user = authenticate(request, username=result["phone"], password=d.get("password"))
-    login(request, user)
-    return JsonResponse({"ok": True, "code": "signed_up", "message": result["message"],
-                         "user": services.get_user_details(user.account)})
-
-
-@require_POST
-@api_login_required
-@voice_required
-def add_contact(request):
-    d = _body(request)
-    return _respond(services.add_contact(request.user.account, d.get("name"), d.get("upi_id")))
-
-
-# ---------------------------------------------------------------- analytics
-
-from django.http import Http404  # noqa: E402
-
-from .analysis import build_analysis, normalize_category  # noqa: E402
-from .models import Analysis  # noqa: E402
-
-
-@require_GET
-@api_login_required
-def analysis_live(request):
-    """GET /api/analysis/?category=food&period=last_month (used by the page's selectors)."""
-    q = request.GET
-    return JsonResponse({"ok": True, **build_analysis(request.user.account, q.get("category"), q.get("period"))})
-
-
-@require_GET
-@api_login_required
-def analysis_saved(request, analysis_id):
-    a = Analysis.objects.filter(pk=analysis_id, account=request.user.account).first()
-    if a is None:                                   # someone else's (or made-up) id
-        return JsonResponse({"ok": False, "code": "not_found", "message": "Analysis not found."}, status=404)
-    p = a.params or {}
-    return JsonResponse({"ok": True, "params": p,
-                         **build_analysis(request.user.account, p.get("category"), p.get("period"))})
-
-
-@ensure_csrf_cookie
-def analysis_page(request, analysis_id=None):
-    if not (request.user.is_authenticated and hasattr(request.user, "account")):
-        return redirect("/login/")
-    params = {"category": "all", "period": "last_30_days"}
-    if analysis_id is not None:
-        a = Analysis.objects.filter(pk=analysis_id, account=request.user.account).first()
-        if a is None:
-            raise Http404("Analysis not found")
-        params = {"category": normalize_category(a.params.get("category")),
-                  "period": a.params.get("period") or "last_30_days"}
-    return render(request, "bank/analysis.html", {"params": params, "analysis_id": analysis_id})
+        response = client.text_to_speech.convert(
+            text=text,
+            model="bulbul:v4-flash",
+            language_code=lang,
+            speaker=speaker,
+            speech_sample_rate=22050,
+        )
+        audio_b64 = "".join(response.audios)
+        return JsonResponse({"ok": True, "audio_b64": audio_b64})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Sarvam TTS failed")
+        return JsonResponse({"ok": False, "code": "tts_error",
+                             "message": str(exc)}, status=502)

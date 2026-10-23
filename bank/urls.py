@@ -29,4 +29,7 @@ urlpatterns = [
     path("analysis/<uuid:analysis_id>/", views.analysis_saved),
     path("agent/chat/", views.agent_chat),
     path("agent/reset/", views.agent_reset),
+    # Sarvam AI voice endpoints
+    path("voice/stt/", views.voice_stt),
+    path("voice/tts/", views.voice_tts),
 ]

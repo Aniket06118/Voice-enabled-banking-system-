@@ -1,81 +1,210 @@
-<!doctype html>
+{% load static %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EchoMint</title>
+<link rel="stylesheet" href="{% static 'bank/fonts/fonts.css' %}">
+{% load static %}
+<script type="importmap">
+{ "imports": { "three": "{% static 'bank/vendor/three/three.module.min.js' %}", "three/addons/": "{% static 'bank/vendor/three/addons/' %}" } }
+</script>
 <style>
   :root {
-    --bg: #0b1210; --panel: #121c19; --panel2: #182420; --line: #25362f;
-    --text: #e8f3ee; --muted: #8aa399; --accent: #2ee6a6; --accent-ink: #04271b;
-    --danger: #ff6b6b; --me: #1d3a31;
-    color-scheme: dark;
+    /* soft, low-glare theme: cool off-white, soft black, one blue */
+    --bg: #e9ecf1; --surface: #f6f7f9; --surface2: #eef1f5; --line: #d6dbe4;
+    --ink: #17191e; --slate: #586072; --signal: #2f56e8; --signal-soft: #e0e7fb;
+    --navy: #13244d; --good: #18794e; --warn: #b4441c;
+    /* names used by the PIN pad + voice check */
+    --panel: var(--surface); --panel2: var(--surface2); --text: var(--ink); --muted: var(--slate);
+    --accent: var(--signal); --accent-ink: #fff; --danger: #b42323;
+    --display: "Bricolage Grotesque", "Atkinson Hyperlegible", system-ui, sans-serif;
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  button { font: inherit; cursor: pointer; }
+  html { font-size: 17px; }
+  html.big { font-size: 19.5px; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 1rem/1.5 "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
   .hidden { display: none !important; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 24px; }
+  input, select { width: 100%; height: 52px; padding: 0 16px; border-radius: 14px; border: 1.5px solid var(--line); background: #fbfcfd; }
+  input:focus, select:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 4px rgba(47,86,232,.14); }
+  label { display: block; font-weight: 700; font-size: .9rem; margin: 0 0 6px; }
+  .primary { width: 100%; height: 52px; margin-top: 16px; border: 0; border-radius: 14px; background: var(--signal); color: #fff; font-weight: 700; transition: background-color .2s, transform .15s; }
+  .primary:hover { background: #2448cf; } .primary:active { transform: scale(.98); }
+  .ghost { height: 52px; padding: 0 20px; border-radius: 14px; border: 1.5px solid var(--line); background: transparent; font-weight: 700; }
+  .ghost:hover { border-color: var(--ink); }
+  .linkbtn { background: none; border: 0; padding: 0; color: var(--signal); font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+  svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
-  /* ---------- login ---------- */
-  #login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px; }
-  #login .card { width: min(380px, 100%); }
-  .brand { font-weight: 700; font-size: 26px; letter-spacing: .2px; }
-  .brand span { color: var(--accent); }
-  .tag { color: var(--muted); margin: 4px 0 22px; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
-  input, select { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
-                  background: var(--panel2); color: var(--text); font: inherit; }
-  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
-  .primary { width: 100%; margin-top: 20px; padding: 13px; border: 0; border-radius: 12px;
-             background: var(--accent); color: var(--accent-ink); font-weight: 700; }
-  .hint { color: var(--muted); font-size: 13px; margin-top: 14px; }
-  .error { color: var(--danger); font-size: 14px; min-height: 20px; margin-top: 10px; }
+  /* ---------- shell: sidebar | main | assistant ---------- */
+  .shell { display: grid; grid-template-columns: 260px minmax(0, 1fr) 380px; min-height: 100vh; }
+  .shell.closed { grid-template-columns: 260px minmax(0, 1fr) 0; }
+  .side { position: sticky; top: 0; height: 100vh; background: var(--surface); border-right: 1px solid var(--line); padding: 22px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .logo { display: flex; align-items: center; gap: 12px; padding: 4px 10px 22px; text-decoration: none; color: inherit; }
+  .logo .mk { width: 40px; height: 40px; border-radius: 12px; background: var(--ink); display: grid; place-items: center; }
+  .logo .mk i { display: inline-block; width: 4px; margin: 0 1.5px; border-radius: 3px; background: #fff; }
+  .logo .mk i:nth-child(2) { background: #7f9bff; }
+  .logo b { display: block; font: 800 1.35rem/1 var(--display); letter-spacing: -.03em; }
+  .logo small { color: var(--slate); font-size: .78rem; }
+  .nav button { width: 100%; display: flex; align-items: center; gap: 14px; padding: 13px 14px; border: 0; border-radius: 14px; background: transparent; text-align: left; font-size: 1rem; color: var(--slate); transition: background-color .2s, color .2s; }
+  .nav button:hover { background: var(--surface2); color: var(--ink); }
+  .nav button[aria-current="page"] { background: var(--signal-soft); color: var(--signal); font-weight: 700; }
+  .nav .chev { margin-left: auto; width: 16px; height: 16px; opacity: .5; }
+  .side .who { margin-top: auto; display: flex; align-items: center; gap: 12px; padding: 14px 10px 0; border-top: 1px solid var(--line); }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--navy); color: #fff; display: grid; place-items: center; font-weight: 700; flex: none; }
+  .who .nm { font-weight: 700; line-height: 1.2; } .who button { margin-top: 2px; font-size: .85rem; }
 
-  /* ---------- app ---------- */
-  #app { max-width: 1060px; margin: 0 auto; padding: 16px; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 16px; }
-  .who { color: var(--muted); font-size: 14px; text-align: right; }
-  .linkbtn { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 0; }
-  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
-  @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
+  main { padding: 34px clamp(18px, 3vw, 44px) 60px; min-width: 0; }
+  .view { animation: in .35s ease both; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+  .hello h1 { font: 800 clamp(1.9rem, 3vw, 2.6rem)/1.1 var(--display); letter-spacing: -.03em; margin: 0 0 6px; }
+  .hello p { margin: 0 0 26px; color: var(--slate); }
+  h2 { font: 700 1.3rem/1.2 var(--display); letter-spacing: -.01em; margin: 0; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 
-  .chat { display: flex; flex-direction: column; height: min(72vh, 680px); padding: 0; overflow: hidden; }
+  /* account cards */
+  .accts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 22px; }
+  .acct { position: relative; background: var(--surface); border: 1.5px solid var(--line); border-radius: 20px; padding: 18px 20px 20px; transition: transform .3s cubic-bezier(.2,1.4,.4,1), box-shadow .3s; }
+  .acct:hover { transform: translateY(-3px); box-shadow: 0 14px 30px -18px rgba(19,36,77,.45); }
+  .acct.primary-acct { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(47,86,232,.12); }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 8px; background: var(--surface2); font-size: .8rem; font-weight: 700; color: var(--slate); }
+  .tag.blue { position: absolute; right: 16px; top: 16px; background: var(--signal-soft); color: var(--signal); }
+  .acct .num { color: var(--slate); margin: 12px 0 10px; font-size: .95rem; letter-spacing: .04em; }
+  .acct .lbl { color: var(--slate); font-size: .85rem; }
+  .acct .big { font: 800 1.9rem/1.15 var(--display); letter-spacing: -.02em; margin: 2px 0 12px; font-variant-numeric: tabular-nums; }
+  .acct .row { display: flex; justify-content: space-between; font-size: .88rem; color: var(--slate); padding-top: 6px; border-top: 1px solid var(--line); }
+  .acct .row b { color: var(--ink); }
+  .meter { height: 10px; border-radius: 6px; background: var(--surface2); overflow: hidden; margin: 4px 0 12px; }
+  .meter i { display: block; height: 100%; background: var(--signal); border-radius: 6px; transition: width .8s cubic-bezier(.2,.8,.2,1); }
+
+  /* quick actions */
+  .actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; }
+  .qa { aspect-ratio: 1.15; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 0; border-radius: 18px;
+        background: var(--navy); color: #fff; font-weight: 700; font-size: .98rem; text-align: center; padding: 10px;
+        transition: transform .3s cubic-bezier(.2,1.5,.4,1), background-color .2s, box-shadow .3s; }
+  .qa svg.i { width: 30px; height: 30px; transition: transform .35s cubic-bezier(.2,1.5,.4,1); }
+  .qa:hover { background: var(--signal); transform: translateY(-4px); box-shadow: 0 16px 28px -16px rgba(47,86,232,.8); }
+  .qa:hover svg.i { transform: scale(1.15) rotate(-6deg); }
+  .qa:active { transform: scale(.97); }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; }
+  .list { list-style: none; margin: 0; padding: 0; }
+  .list li { display: flex; align-items: center; gap: 14px; padding: 13px 0; border-top: 1px solid var(--line); }
+  .list li:first-child { border-top: 0; }
+  .list .ico { width: 42px; height: 42px; border-radius: 12px; background: var(--surface2); display: grid; place-items: center; color: var(--slate); flex: none; }
+  .list .who2 { flex: 1; min-width: 0; } .list .who2 b { display: block; }
+  .list small { color: var(--slate); font-size: .84rem; }
+  .list .amt { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; margin-top: 3px; padding: 1px 9px; border-radius: 7px; font-size: .74rem; font-weight: 700; }
+  .pill.ok { background: #e2f3ea; color: var(--good); } .pill.bad { background: #f8e4e1; color: var(--danger); }
+  .notice .ico.warn { background: #f8e8df; color: var(--warn); } .notice .ico.info { background: var(--signal-soft); color: var(--signal); }
+  .empty { color: var(--slate); padding: 22px 0; text-align: center; }
+
+  /* forms inside views */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .field { margin-bottom: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { padding: 8px 14px; border-radius: 999px; border: 1.5px solid var(--line); background: #fbfcfd; font-weight: 700; transition: all .2s; }
+  .chip:hover, .chip.on { border-color: var(--signal); background: var(--signal-soft); color: var(--signal); }
+  .dl { display: grid; grid-template-columns: auto 1fr; gap: 10px 24px; margin: 0; }
+  .dl dt { color: var(--slate); } .dl dd { margin: 0; font-weight: 700; }
+  .filters { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+  .filters input { flex: 1 1 220px; } .filters select { width: auto; flex: 0 0 170px; }
+  .calc-out { margin-top: 18px; padding: 18px; border-radius: 16px; background: var(--surface2); }
+  .calc-out .big { font: 800 1.8rem/1.2 var(--display); }
+  .vcard { max-width: 420px; aspect-ratio: 1.586; border-radius: 22px; padding: 26px; color: #fff; position: relative; overflow: hidden;
+           background: linear-gradient(135deg, #13244d 0%, #1f3a86 60%, #2f56e8 100%); transition: filter .3s, transform .4s cubic-bezier(.2,1.4,.4,1); }
+  .vcard:hover { transform: rotate(-1.5deg) translateY(-4px); }
+  .vcard.frozen { filter: grayscale(1) brightness(.85); }
+  .vcard .chipgold { width: 46px; height: 34px; border-radius: 7px; background: linear-gradient(135deg, #e9d18c, #b8953f); margin: 26px 0 22px; }
+  .vcard .cn { font-size: 1.35rem; letter-spacing: .14em; }
+  .vcard .foot { display: flex; justify-content: space-between; margin-top: 18px; font-size: .9rem; opacity: .9; }
+  .toggle { display: flex; align-items: center; gap: 12px; margin-top: 18px; font-weight: 700; }
+  .toggle input { width: 54px; height: 30px; appearance: none; border-radius: 999px; background: var(--line); position: relative; padding: 0; border: 0; cursor: pointer; transition: background .2s; }
+  .toggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: transform .25s cubic-bezier(.2,1.4,.4,1); }
+  .toggle input:checked { background: var(--signal); } .toggle input:checked::after { transform: translateX(24px); }
+  details.faq { border-top: 1px solid var(--line); padding: 14px 0; } details.faq summary { font-weight: 700; cursor: pointer; }
+  details.faq p { color: var(--slate); margin: 8px 0 0; }
+
+  /* ---------- assistant panel ---------- */
+  .assistant { position: sticky; top: 0; height: 100vh; background: var(--surface); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .shell.closed .assistant { visibility: hidden; }
+  .as-head { display: flex; align-items: center; gap: 12px; padding: 18px 18px; background: var(--navy); color: #fff; }
+  .as-head .bot { width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,.12); display: grid; place-items: center; }
+  .as-head b { display: block; font: 700 1.1rem/1.2 var(--display); } .as-head small { color: #b7c3e6; font-size: .8rem; }
+  .as-head .x { margin-left: auto; background: none; border: 0; color: #fff; padding: 6px; border-radius: 10px; }
+  .as-head .x:hover { background: rgba(255,255,255,.12); }
   #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 82%; padding: 10px 14px; border-radius: 16px; white-space: pre-wrap; word-wrap: break-word; }
-  .msg.bot { background: var(--panel2); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 4px; }
-  .msg.me { background: var(--me); align-self: flex-end; border-bottom-right-radius: 4px; }
-  .msg.sys { align-self: center; color: var(--muted); font-size: 13px; }
-  .msg.ok { border-color: var(--accent); }
-  .typing span { display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 50%;
-                 background: var(--muted); animation: blink 1.2s infinite; }
+  .msg { max-width: 88%; padding: 11px 15px; border-radius: 18px; white-space: pre-wrap; word-wrap: break-word; font-size: .98rem; }
+  .msg.bot { background: var(--surface2); align-self: flex-start; border-bottom-left-radius: 6px; }
+  .msg.me { background: var(--navy); color: #fff; align-self: flex-end; border-bottom-right-radius: 6px; }
+  .msg.sys { align-self: center; color: var(--slate); font-size: .85rem; background: none; }
+  .msg.ok { box-shadow: inset 0 0 0 1.5px var(--signal); }
+  .typing span { display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 50%; background: var(--slate); animation: blink 1.2s infinite; }
   .typing span:nth-child(2) { animation-delay: .2s; } .typing span:nth-child(3) { animation-delay: .4s; }
   @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .state { margin: 0 18px 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: #fbfcfd; display: flex; align-items: center; gap: 10px; font-size: .9rem; }
+  .state b { font-weight: 700; } .state .sdot { width: 10px; height: 10px; border-radius: 50%; background: #9aa3b5; flex: none; }
+  .state[data-s="listening"] .sdot, .state[data-s="thinking"] .sdot { background: var(--signal); animation: blink 1s infinite; }
+  .state[data-s="confirm"] .sdot, .state[data-s="pin"] .sdot { background: var(--warn); }
+  .state .sval { margin-left: auto; padding: 2px 10px; border-radius: 8px; background: var(--surface2); font-weight: 700; font-size: .8rem; }
+  .robot-stage { position: relative; height: 210px; flex: none; background: radial-gradient(120% 90% at 50% 100%, #dfe5f0 0%, #eef1f6 55%, var(--surface) 100%); border-bottom: 1px solid var(--line); cursor: pointer; }
+  .robot-stage canvas { display: block; }
+  .robot-tools { position: absolute; left: 12px; right: 12px; top: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; z-index: 2; }
+  .robot-tools select { width: auto; height: 36px; padding: 0 10px; font-size: .88rem; border-radius: 10px; background: rgba(251,252,253,.9); }
+  .hf { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .85rem; font-weight: 700; background: rgba(251,252,253,.9); padding: 6px 10px; border-radius: 10px; border: 1.5px solid var(--line); cursor: pointer; }
+  .hf input { width: 18px; height: 18px; margin: 0; accent-color: var(--signal); }
+  #speed { padding: 0 18px; color: var(--slate); font-size: .8rem; min-height: 16px; }
+  .open-analysis { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 9px 14px; border-radius: 12px; background: var(--signal); color: #fff; font-weight: 700; text-decoration: none; }
+  .open-analysis svg.i { width: 18px; height: 18px; }
+  .open-analysis:hover { background: #2448cf; }
+  .navlink { width: 100%; display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-radius: 14px; color: var(--slate); text-decoration: none; transition: background-color .2s, color .2s; }
+  .navlink:hover { background: var(--surface2); color: var(--ink); }
+  #heard { min-height: 20px; padding: 0 18px 6px; color: var(--slate); font-size: .9rem; font-style: italic; }
+  .composer { border-top: 1px solid var(--line); padding: 12px 14px; display: flex; gap: 10px; align-items: center; }
+  .composer input { flex: 1; height: 50px; }
+  .mic { width: 50px; height: 50px; border-radius: 14px; border: 0; background: var(--signal); color: #fff; display: grid; place-items: center; flex: none; transition: transform .2s; }
+  .mic:hover { transform: scale(1.06); }
+  .mic.live { animation: pulse 1.4s infinite; background: var(--warn); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(47,86,232,.5); } 100% { box-shadow: 0 0 0 16px rgba(47,86,232,0); } }
+  .fab { position: fixed; right: 22px; bottom: 22px; width: 64px; height: 64px; border-radius: 50%; border: 0; background: var(--signal); color: #fff; display: grid; place-items: center; z-index: 8;
+         box-shadow: 0 16px 30px -12px rgba(47,86,232,.8); transition: transform .3s cubic-bezier(.2,1.5,.4,1); }
+  .fab:hover { transform: scale(1.08) rotate(-8deg); }
+  .fab svg.i { width: 28px; height: 28px; }
 
-  .composer { border-top: 1px solid var(--line); padding: 12px; display: flex; gap: 10px; align-items: center; }
-  .composer input { flex: 1; }
-  .send { width: auto; margin: 0; padding: 12px 18px; }
-  .mic { width: 54px; height: 54px; flex: none; border-radius: 50%; border: 2px solid var(--accent);
-         background: transparent; color: var(--accent); font-size: 22px; }
-  .mic.live { background: var(--accent); color: var(--accent-ink); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46,230,166,.5); } 100% { box-shadow: 0 0 0 16px rgba(46,230,166,0); } }
-  #heard { min-height: 20px; padding: 0 14px 8px; color: var(--muted); font-size: 14px; font-style: italic; }
+  /* sheet (modal) + toast */
+  .sheet-bg { position: fixed; inset: 0; background: rgba(15,22,40,.45); display: grid; place-items: center; padding: 16px; z-index: 9; animation: fade .2s; }
+  @keyframes fade { from { opacity: 0; } }
+  .sheet { width: min(520px, 100%); max-height: 92vh; overflow-y: auto; background: var(--surface); border-radius: 24px; padding: 26px; animation: pop .35s cubic-bezier(.2,1.3,.4,1); }
+  @keyframes pop { from { transform: translateY(16px) scale(.97); opacity: 0; } }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .sheet-head h2 { font-size: 1.45rem; }
+  .sheet-head button { background: none; border: 0; padding: 6px; border-radius: 10px; } .sheet-head button:hover { background: var(--surface2); }
+  .confirm-big { font: 800 1.7rem/1.25 var(--display); margin: 6px 0 4px; }
+  .btn-row { display: flex; gap: 12px; margin-top: 18px; } .btn-row .primary { margin-top: 0; flex: 1; }
+  .done { text-align: center; padding: 10px 0; } .done .tick { width: 72px; height: 72px; margin: 0 auto 14px; border-radius: 50%; background: #e2f3ea; color: var(--good); display: grid; place-items: center; animation: pop .5s cubic-bezier(.2,1.6,.4,1); }
+  .err { color: var(--danger); font-weight: 700; min-height: 24px; margin: 10px 0 0; }
+  .toast { position: fixed; left: 50%; bottom: 26px; translate: -50% 0; background: var(--ink); color: #fff; padding: 14px 22px; border-radius: 14px; z-index: 30; font-weight: 700; animation: pop .3s; max-width: calc(100% - 32px); }
 
-  .side { display: flex; flex-direction: column; gap: 16px; }
-  .balance .label { color: var(--muted); font-size: 13px; }
-  .balance .amount { font-size: 34px; font-weight: 700; margin-top: 2px; }
-  .balance .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
-  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .opts label { margin: 0 0 6px; }
-  .tx { list-style: none; margin: 8px 0 0; padding: 0; }
-  .tx li { display: flex; justify-content: space-between; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
-  .tx li:first-child { border-top: 0; }
-  .tx small { display: block; color: var(--muted); }
-  .tx .out { color: var(--text); font-variant-numeric: tabular-nums; }
-  .tx .bad { color: var(--danger); }
-  h3 { margin: 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .6px; }
-
+  @media (max-width: 1180px) {
+    .shell, .shell.closed { grid-template-columns: 240px minmax(0, 1fr); }
+    .assistant { position: fixed; right: 0; top: 0; width: min(420px, 100%); z-index: 7; box-shadow: -20px 0 40px -20px rgba(0,0,0,.35); transition: transform .35s cubic-bezier(.2,1,.3,1); }
+    .shell.closed .assistant { transform: translateX(105%); visibility: visible; }
+  }
+  @media (max-width: 900px) { .accts { grid-template-columns: 1fr; } .two, .form-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) {
+    .shell, .shell.closed { display: block; }
+    .side { position: static; height: auto; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding: 10px; border-right: 0; border-bottom: 1px solid var(--line); }
+    .logo { padding: 0 8px 0 0; } .logo small { display: none; }
+    .nav { display: flex; gap: 4px; } .nav button { white-space: nowrap; padding: 10px 12px; } .nav .chev { display: none; }
+    .side .who { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
   /* ---------- PIN pad ---------- */
   #pinOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: grid; place-items: center; padding: 16px; z-index: 10; }
   #pinBox { width: min(340px, 100%); text-align: center; }
@@ -92,48 +221,56 @@
   .pad button:active { background: var(--line); }
   .pad .quiet { font-size: 15px; color: var(--muted); }
   #pinMsg { min-height: 22px; margin-top: 10px; color: var(--danger); font-size: 14px; }
+
+  /* ---------- voice check ---------- */
+  #voiceOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.78); display: grid; place-items: center; padding: 16px; z-index: 20; }
+  #voiceBox { width: min(400px, 100%); text-align: center; }
+  #voiceBox h2 { margin: 6px 0 4px; font-size: 21px; }
+  #voiceBox p { margin: 0; color: var(--muted); font-size: 15px; }
+  .vstep { color: var(--accent); font-size: 12px; letter-spacing: .8px; text-transform: uppercase; font-weight: 700; }
+  .vdigits { font-size: clamp(28px, 8vw, 40px); white-space: nowrap; font-weight: 700; letter-spacing: 2px; margin: 22px 0 14px; font-variant-numeric: tabular-nums; }
+  .vbar { height: 6px; border-radius: 6px; background: var(--panel2); overflow: hidden; margin: 0 0 6px; }
+  .vbar i { display: block; height: 100%; width: 0; background: var(--accent); }
+  #vBtn { margin-top: 14px; }
+  #vBtn:disabled { opacity: .55; cursor: default; }
+  #vMsg { min-height: 44px; margin-top: 12px; font-size: 14px; color: var(--muted); }
+  #vMsg.bad { color: var(--danger); } #vMsg.good { color: var(--accent); }
+  #vPinBox { margin-top: 14px; display: grid; gap: 10px; justify-items: center; }
+  #vPin { width: 160px; text-align: center; font-size: 22px; letter-spacing: 8px; }
+  .vrow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .vlinks { display: flex; gap: 14px; justify-content: center; margin-top: 4px; }
+
 </style>
 </head>
 <body>
+<div class="shell" id="shell">
+  <aside class="side" aria-label="Menu">
+    <a class="logo" href="/" title="EchoMint home"><span class="mk" aria-hidden="true"><i style="height:12px"></i><i style="height:22px"></i><i style="height:15px"></i></span><span><b>EchoMint</b><small>A hands-free bank</small></span></a>
+    <nav class="nav" id="nav"></nav>
+    <div class="who"><span class="avatar" id="avatar">A</span><div><div class="nm" id="whoName"></div><button class="linkbtn" id="logoutBtn">Log out</button></div></div>
+  </aside>
 
-<!-- LOGIN -->
-<div id="login" class="hidden">
-  <form class="card" id="loginForm">
-    <div class="brand">Echo<span>Mint</span></div>
-    <div class="tag">Bank by talking.</div>
-    <label for="phone">Phone number</label>
-    <input id="phone" inputmode="numeric" autocomplete="username" required>
-    <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" required>
-    <button class="primary" type="submit">Log in</button>
-    <div class="error" id="loginError"></div>
-    <div class="hint">Demo account: 9876543210 / demo1234</div>
-  </form>
-</div>
-
-<!-- APP -->
-<div id="app" class="hidden">
-  <header>
-    <div class="brand">Echo<span>Mint</span></div>
-    <div class="who"><span id="whoName"></span><br><button class="linkbtn" id="logoutBtn">Log out</button></div>
-  </header>
-
-  <div class="layout">
-    <section class="card chat">
-      <div id="log" aria-live="polite"></div>
-      <div id="heard"></div>
-      <form class="composer" id="composer">
-        <button type="button" class="mic" id="mic" aria-label="Talk to EchoMint">🎤</button>
-        <input id="text" placeholder="Tap the mic and speak, or type here…" autocomplete="off">
-        <button class="primary send" type="submit">Send</button>
-      </form>
+  <main id="main">
+    <!-- DASHBOARD -->
+    <section class="view" data-view="dashboard">
+      <div class="hello"><h1 id="hello">Welcome back!</h1><p>Here's your account overview.</p></div>
+      <div class="accts" id="accts"></div>
+      <div class="card">
+        <div class="panel-head"><h2>Quick actions</h2></div>
+        <div class="actions" id="quick"></div>
+      </div>
+      <div class="two">
+        <div class="card"><div class="panel-head"><h2>Recent transactions</h2><button class="linkbtn" data-go="payments">View all</button></div><ul class="list" id="recent"></ul></div>
+        <div class="card notice"><div class="panel-head"><h2>Notifications</h2><button class="linkbtn" id="allNotices">View all</button></div><ul class="list" id="notices"></ul></div>
+      </div>
     </section>
 
-    <aside class="side">
-      <div class="card balance">
-        <div class="label">Available balance</div>
-        <div class="amount" id="balance">–</div>
-        <div class="meta" id="acctMeta"></div>
+    <!-- ACCOUNTS -->
+    <section class="view hidden" data-view="accounts">
+      <div class="hello"><h1>Your account</h1><p>Everything about your savings account in one place.</p></div>
+      <div class="two" style="margin-top:0">
+        <div class="card"><h2 style="margin-bottom:16px">Savings account</h2><dl class="dl" id="acctDetails"></dl></div>
+        <div class="card"><h2 style="margin-bottom:16px">Today's spending</h2><div id="todayBox"></div><p style="color:var(--slate);margin:14px 0 0">The daily limit stops anyone from emptying your account in one day. Change it in Settings.</p></div>
       </div>
       <div class="card">
         <div class="opts">
@@ -158,14 +295,111 @@
             <select id="speakOn"><option value="1">On</option><option value="0">Off</option></select>
           </div>
         </div>
+        <p id="stmtTotal" style="margin:0 0 6px;color:var(--slate)"></p>
+        <ul class="list" id="stmt"></ul>
       </div>
+    </section>
+
+    <!-- INVESTMENTS -->
+    <section class="view hidden" data-view="investments">
+      <div class="hello"><h1>Investments</h1><p>Buy digital gold in small amounts and plan a monthly SIP.</p></div>
+      <div class="two" style="margin-top:0">
+        <div class="card"><h2 style="margin-bottom:12px">Digital gold</h2><div id="goldBox"></div><button class="primary" data-act="gold">Buy gold</button></div>
+        <div class="card"><h2 style="margin-bottom:12px">SIP planner</h2>
+          <div class="form-grid"><div class="field"><label for="sipAmt">Monthly amount (₹)</label><input id="sipAmt" type="number" min="100" value="1000"></div>
+          <div class="field"><label for="sipYrs">Years</label><input id="sipYrs" type="number" min="1" max="40" value="5"></div></div>
+          <div class="field"><label for="sipRate">Expected yearly return (%)</label><input id="sipRate" type="number" min="1" max="20" step="0.5" value="10"></div>
+          <div class="calc-out" id="sipOut"></div></div>
+      </div>
+    </section>
+
+    <!-- CARDS -->
+    <section class="view hidden" data-view="cards">
+      <div class="hello"><h1>Cards</h1><p>Your virtual debit card for this demo account.</p></div>
       <div class="card">
-        <h3>Recent payments</h3>
-        <ul class="tx" id="tx"></ul>
+        <div class="vcard" id="vcard"><div style="display:flex;justify-content:space-between"><b style="font:800 1.2rem var(--display)">EchoMint</b><span>Debit</span></div><div class="chipgold"></div><div class="cn" id="cardNo"></div><div class="foot"><span id="cardName"></span><span>Valid till 10/31</span></div></div>
+        <label class="toggle"><input type="checkbox" id="freeze"> <span id="freezeLbl">Freeze card</span></label>
+        <p style="color:var(--slate);margin:10px 0 0">Freezing stops new card payments until you turn it back on. Voice and UPI payments are not affected. This prototype's card is for demonstration.</p>
       </div>
-    </aside>
-  </div>
+    </section>
+
+    <!-- LOANS -->
+    <section class="view hidden" data-view="loans">
+      <div class="hello"><h1>Loans</h1><p>Work out a monthly payment before you speak to the bank.</p></div>
+      <div class="card" style="max-width:640px">
+        <h2 style="margin-bottom:14px">EMI calculator</h2>
+        <div class="field"><label for="lnAmt">Loan amount (₹)</label><input id="lnAmt" type="number" min="1000" value="200000"></div>
+        <div class="form-grid"><div class="field"><label for="lnRate">Interest per year (%)</label><input id="lnRate" type="number" min="1" max="30" step="0.1" value="10.5"></div>
+        <div class="field"><label for="lnYrs">Years</label><input id="lnYrs" type="number" min="1" max="30" value="3"></div></div>
+        <div class="calc-out" id="lnOut"></div>
+      </div>
+    </section>
+
+    <!-- SUPPORT -->
+    <section class="view hidden" data-view="support">
+      <div class="hello"><h1>Support</h1><p>Answers to common questions, or just ask the assistant.</p></div>
+      <div class="card" style="max-width:760px">
+        <button class="primary" style="margin:0 0 10px" id="askBtn">Ask the assistant</button>
+        <details class="faq"><summary>How do I send money by voice?</summary><p>Tap the microphone and say something like “Send 300 to Aman”. EchoMint reads it back. Say “yes” to send. From ₹500 you type your PIN on screen instead.</p></details>
+        <details class="faq"><summary>Why does it ask me to read numbers?</summary><p>Reading fresh, random digits proves it's really you speaking right now. A recording of your voice can't pass, because it won't have those digits.</p></details>
+        <details class="faq"><summary>The voice check keeps failing</summary><p>Speak a little closer to the microphone in a quiet room. If it still fails, choose “Use my PIN instead”. You can also re-record your voice in Profile.</p></details>
+        <details class="faq"><summary>I entered the wrong PIN three times</summary><p>PIN payments are locked for 15 minutes to keep your money safe. Small voice payments still work.</p></details>
+        <details class="faq"><summary>Someone is pressuring me to send money</summary><p>Stop and hang up. EchoMint will never ask for your PIN out loud. Lower your daily limit in Settings if you're worried.</p></details>
+      </div>
+    </section>
+
+    <!-- PROFILE -->
+    <section class="view hidden" data-view="profile">
+      <div class="hello"><h1>Profile</h1><p>Your details, your voice and your PIN.</p></div>
+      <div class="two" style="margin-top:0">
+        <div class="card"><h2 style="margin-bottom:16px">Your details</h2><dl class="dl" id="profileDl"></dl>
+          <h2 style="margin:26px 0 8px">Your voice</h2><p style="color:var(--slate);margin:0 0 12px">If EchoMint often doesn't recognise you, record your voice again in a quiet room.</p>
+          <button class="ghost" id="reVoice" type="button">Re-record my voice</button></div>
+        <form class="card" id="pinForm" novalidate><h2 style="margin-bottom:16px">Change PIN</h2>
+          <div class="field"><label for="oldPin">Current PIN</label><input id="oldPin" type="password" inputmode="numeric" maxlength="4" autocomplete="off"></div>
+          <div class="field"><label for="newPin">New PIN</label><input id="newPin" type="password" inputmode="numeric" maxlength="4" autocomplete="off"></div>
+          <div class="field"><label for="newPin2">New PIN again</label><input id="newPin2" type="password" inputmode="numeric" maxlength="4" autocomplete="off"></div>
+          <button class="primary" type="submit">Change PIN</button><p class="err" id="pinErr" role="alert"></p></form>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view hidden" data-view="settings">
+      <div class="hello"><h1>Settings</h1><p>Make EchoMint easier to see, hear and use.</p></div>
+      <div class="two" style="margin-top:0">
+        <div class="card"><h2 style="margin-bottom:16px">Talking and reading</h2>
+          <div class="field"><label for="lang">Language</label><select id="lang"></select></div>
+          <div class="field"><label for="engine">Speech engine</label><select id="engine"><option value="auto">Automatic (fastest)</option><option value="sarvam">Sarvam AI for every language</option><option value="browser">Browser only</option></select></div>
+          <div class="field"><label for="speakOn">Read replies out loud</label><select id="speakOn"><option value="1">On</option><option value="0">Off</option></select></div>
+          <div class="field"><label for="textSize">Text size</label><select id="textSize"><option value="">Large</option><option value="big">Extra large</option></select></div></div>
+        <form class="card" id="limitForm" novalidate><h2 style="margin-bottom:6px">Daily limit</h2><p style="color:var(--slate);margin:0 0 14px" id="limitNow"></p>
+          <div class="field"><label for="newLimit">New daily limit (₹)</label><input id="newLimit" type="number" min="500" max="100000" step="500"></div>
+          <div class="field"><label for="limitPin">Your PIN</label><input id="limitPin" type="password" inputmode="numeric" maxlength="4" autocomplete="off"></div>
+          <button class="primary" type="submit">Save daily limit</button><p class="err" id="limitErr" role="alert"></p></form>
+      </div>
+    </section>
+  </main>
+
+  <aside class="assistant" id="assistant" aria-label="EchoMint assistant">
+    <div class="as-head"><span class="bot" id="botIcon"></span><div><b>EchoMint Assistant</b><small>Talk or type. Nothing moves until you confirm.</small></div><button class="x" id="closeAs" aria-label="Close assistant"></button></div>
+    <div class="robot-stage" id="robot" title="Tap me">
+      <div class="robot-tools">
+        <select id="langQuick" aria-label="Language"></select>
+        <label class="hf"><input type="checkbox" id="handsFree"> Hands-free</label>
+      </div>
+    </div>
+    <div id="log" aria-live="polite"></div>
+    <div class="state" id="state" data-s="ready"><span class="sdot"></span><span>Assistant status</span><span class="sval" id="stateVal">Ready</span></div>
+    <div id="speed" aria-live="off"></div>
+    <div id="heard"></div>
+    <form class="composer" id="composer">
+      <input id="text" placeholder="Type your message…" autocomplete="off" aria-label="Message">
+      <button type="button" class="mic" id="mic" aria-label="Talk to EchoMint"></button>
+    </form>
+  </aside>
 </div>
+<button class="fab" id="fab" aria-label="Open the assistant"></button>
+<div id="sheetHost"></div>
 
 <!-- PIN PAD -->
 <div id="pinOverlay" class="hidden">
@@ -178,51 +412,371 @@
   </div>
 </div>
 
-<script>
-const $ = (s) => document.querySelector(s);
-const csrf = () => (document.cookie.split("; ").find(r => r.startsWith("csrftoken=")) || "").split("=")[1] || "";
+<!-- VOICE CHECK -->
+<div id="voiceOverlay" class="hidden">
+  <div class="card" id="voiceBox" role="dialog" aria-modal="true" aria-labelledby="vTitle">
+    <div class="vstep" id="vStep"></div>
+    <h2 id="vTitle"></h2>
+    <p id="vSub"></p>
+    <div class="vdigits" id="vDigits" aria-live="polite">– – – – – –</div>
+    <div class="vbar"><i id="vBar"></i></div>
+    <button class="primary" id="vBtn" type="button">🎤 Tap, then read the digits</button>
+    <div id="vPinBox" class="hidden">
+      <input id="vPin" type="password" inputmode="numeric" maxlength="4" placeholder="4-digit PIN" autocomplete="off">
+      <div class="vrow">
+        <button class="primary" id="vPinGo" type="button">Unlock</button>
+        <button id="vPinRe" type="button">Unlock &amp; re-record my voice</button>
+      </div>
+      <button class="linkbtn" id="vPinBack" type="button">Back to voice</button>
+    </div>
+    <div id="vMsg"></div>
+    <div class="vlinks"><button class="linkbtn hidden" id="vPinLink" type="button">Trouble? Use my PIN instead</button>
+    <button class="linkbtn hidden" id="vCancel" type="button">Cancel</button></div>
+  </div>
+</div>
 
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const csrf = () => (document.cookie.split("; ").find(r => r.startsWith("csrftoken=")) || "").split("=")[1] || "";
 async function api(url, method = "GET", body) {
-  const res = await fetch(url, {
-    method, credentials: "same-origin",
-    headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const res = await fetch(url, { method, credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() }, body: body ? JSON.stringify(body) : undefined });
   let data = {}; try { data = await res.json(); } catch (e) {}
   return { status: res.status, data };
 }
 const rupees = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2));
+const when = (iso) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+const LANG_NAMES = { "en-IN": "English", "hi-IN": "हिन्दी", "ta-IN": "தமிழ்", "te-IN": "తెలుగు", "bn-IN": "বাংলা", "mr-IN": "मराठी",
+  "gu-IN": "ગુજરાતી", "kn-IN": "ಕನ್ನಡ", "ml-IN": "മലയാളം", "pa-IN": "ਪੰਜਾਬੀ", "od-IN": "ଓଡ଼ିଆ" };
 
-/* ---------------- login / session ---------------- */
+/* ---------- icons (lucide-style line icons) ---------- */
+const P = {
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  accounts: '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
+  send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>',
+  invest: '<path d="M22 7 13.5 15.5l-5-5L2 17"/><path d="M16 7h6v6"/>',
+  card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+  loan: '<path d="M3 22h18"/><path d="M6 18v-7M10 18v-7M14 18v-7M18 18v-7"/><path d="M12 2 20 7H4z"/>',
+  support: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>',
+  settings: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+  bill: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 17.5v-11"/>',
+  phone: '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>',
+  gold: '<circle cx="8" cy="8" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.3 18"/><path d="M7 6h1v4"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8M10 9H8"/>',
+  mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  bot: '<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>',
+  chev: '<path d="m9 18 6-6-6-6"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M7 15v3M11 10v8M15 13v5M19 6v12"/>',
+};
+const I = (n, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+
+/* ---------- navigation ---------- */
+const VIEWS = [["dashboard", "Dashboard", "dashboard"], ["accounts", "Accounts", "accounts", 1], ["payments", "Payments & Transfers", "send", 1],
+  ["investments", "Investments", "invest", 1], ["cards", "Cards", "card"], ["loans", "Loans", "loan"], ["support", "Support", "support"],
+  ["analytics", "Analytics", "invest", 0, "/analysis/"], ["profile", "Profile", "user"], ["settings", "Settings", "settings"]];
+$("#nav").innerHTML = VIEWS.map(([id, name, ic, chev, href]) => href
+  ? `<a class="navlink" href="${href}">${I(ic === "invest" ? "chart" : ic)}<span>${name}</span></a>`
+  : `<button type="button" data-go="${id}">${I(ic)}<span>${name}</span>${chev ? I("chev", "i chev") : ""}</button>`).join("");
+function showView(id) {
+  if (id === "analytics") { location.href = "/analysis/"; return; }
+  if (!VIEWS.some(v => v[0] === id && !v[4])) id = "dashboard";
+  $$(".view").forEach(v => v.classList.toggle("hidden", v.dataset.view !== id));
+  $$("#nav button").forEach(b => b.dataset.go === id ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
+  if (location.hash.slice(1) !== id) history.replaceState(null, "", "#" + id);
+  window.scrollTo({ top: 0 });
+}
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]"); if (go) { showView(go.dataset.go); return; }
+  const act = e.target.closest("[data-act]"); if (act) ACTIONS[act.dataset.act]();
+});
+
+/* ---------- quick actions ---------- */
+const QUICK = [["send", "Send Money", "send"], ["bills", "Pay Bills", "bill"], ["recharge", "Recharge Mobile", "phone"], ["invest", "Invest", "invest"],
+  ["gold", "Digital Gold", "gold"], ["statements", "View Statements", "file"], ["loans", "Loans", "loan"]];
+$("#quick").innerHTML = QUICK.map(([a, n, ic]) => `<button class="qa" type="button" data-act="${a}">${I(ic)}<span>${n}</span></button>`).join("");
+$("#payActions").innerHTML = QUICK.filter(q => ["send", "bills", "recharge", "gold"].includes(q[0]))
+  .map(([a, n, ic]) => `<button class="qa" type="button" data-act="${a}" style="aspect-ratio:auto;padding:22px 10px">${I(ic)}<span>${n}</span></button>`).join("");
+
+/* ---------- data ---------- */
+let ME = null, HISTORY = [], NOTICES = [];
+const GOLD_RATE = 7350;      // demo price per gram
+const contactsOf = (kind) => (ME?.contacts || []).filter(c => (c.kind || "person") === kind);
+
 async function boot() {
   const { status, data } = await api("/api/me/");
-  if (status === 200) showApp(data); else { $("#login").classList.remove("hidden"); $("#app").classList.add("hidden"); }
+  if (status !== 200) { location.href = "/login/"; return; }
+  showApp(data);
 }
 function showApp(me) {
-  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
-  $("#whoName").textContent = me.name;
-  $("#acctMeta").textContent = `${me.bank_name} · A/c ${me.account_number}`;
-  setBalance(me.balance);
-  if (!$("#log").children.length) {
-    addMsg("bot", `Hi ${me.name.split(" ")[0]}! Tap the mic and tell me what to do — for example “send 300 to Aman” or “what's my balance?”`);
-  }
-  loadHistory();
+  ME = me;
+  $("#whoName").textContent = me.name; $("#avatar").textContent = me.name[0] || "A";
+  $("#hello").textContent = `${store.get("seen-" + me.account_number) ? "Welcome back" : "Welcome"}, ${me.name.split(" ")[0]}!`;
+  store.set("seen-" + me.account_number, "1");
+  if (!$("#log").children.length) addMsg("bot", `Hi ${me.name.split(" ")[0]}! Tap the microphone and tell me what to do. For example: “what's my balance?”, “pay my electricity bill” or “open settings”.`);
+  renderAll(); refresh(); ensureVoice();
 }
-function setBalance(b) { $("#balance").textContent = rupees(b); }
+async function refresh() {
+  const [me, h, n] = await Promise.all([api("/api/me/"), api("/api/history/?limit=200"), api("/api/notifications/")]);
+  if (me.status === 401) { location.href = "/login/"; return; }
+  if (me.status === 200) ME = me.data;
+  if (h.status === 200) HISTORY = h.data.payments;
+  if (n.status === 200) NOTICES = n.data.notifications;
+  renderAll();
+}
+const loadHistory = refresh;            // used by the PIN pad and chat code
+function setBalance(b) { if (ME) { ME.balance = b; renderCards(); } }
 
-$("#loginForm").addEventListener("submit", async (e) => {
-  e.preventDefault(); $("#loginError").textContent = "";
-  const { status, data } = await api("/api/login/", "POST",
-    { phone: $("#phone").value.trim(), password: $("#password").value });
-  if (status === 200) { $("#password").value = ""; showApp(data.user); }
-  else $("#loginError").textContent = data.message || "Could not log in.";
+function sumSince(days, filter = () => true) {
+  const since = Date.now() - days * 864e5;
+  return HISTORY.filter(p => p.status === "Success" && new Date(p.timestamp) >= since && filter(p)).reduce((a, p) => a + p.amount, 0);
+}
+function renderAll() { if (!ME) return; renderCards(); renderRecent(); renderNotices(); renderAccounts(); renderStatement(); renderGold(); renderProfile(); renderCalc(); }
+
+function renderCards() {
+  const masked = "XXXX-XXX-" + ME.account_number.slice(-4);
+  const limit = Number(ME.daily_limit), spent = Number(ME.spent_today || 0);
+  const month = sumSince(30), count = HISTORY.filter(p => p.status === "Success" && new Date(p.timestamp) >= Date.now() - 30 * 864e5).length;
+  const top = {}; HISTORY.filter(p => p.status === "Success" && new Date(p.timestamp) >= Date.now() - 30 * 864e5).forEach(p => top[p.recipient] = (top[p.recipient] || 0) + p.amount);
+  const topName = Object.entries(top).sort((a, b) => b[1] - a[1])[0];
+  $("#accts").innerHTML = `
+    <div class="acct primary-acct"><span class="tag">Savings</span><span class="tag blue">Primary</span>
+      <div class="num">${masked}</div><div class="lbl">Total balance</div><div class="big">${rupees(ME.balance)}</div>
+      <div class="row"><span>Available</span><b>${rupees(ME.balance)}</b></div><div class="row" style="border:0"><span>Account holder</span><b>${esc(ME.name)}</b></div></div>
+    <div class="acct"><span class="tag">Today</span>
+      <div class="num">Daily limit ${rupees(limit)}</div><div class="lbl">Spent today</div><div class="big">${rupees(spent)}</div>
+      <div class="meter"><i style="width:${Math.min(100, spent / limit * 100)}%"></i></div>
+      <div class="row"><span>Left to spend today</span><b>${rupees(Math.max(0, limit - spent))}</b></div></div>
+    <div class="acct"><span class="tag">Last 30 days</span>
+      <div class="num">${count} payment${count === 1 ? "" : "s"}</div><div class="lbl">Total spent</div><div class="big">${rupees(month)}</div>
+      <div class="row"><span>Most paid to</span><b>${topName ? esc(topName[0]) : "Nobody yet"}</b></div><div class="row" style="border:0"><span>Bank</span><b>${esc(ME.bank_name)}</b></div></div>`;
+}
+function txRow(p) {
+  const kind = (ME.contacts.find(c => c.name === p.recipient) || {}).kind || "person";
+  const ic = { biller: "bill", recharge: "phone", gold: "gold", merchant: "card" }[kind] || "send";
+  const ok = p.status === "Success";
+  return `<li><span class="ico">${I(ic)}</span><span class="who2"><b>${esc(p.recipient)}</b><small>${when(p.timestamp)}${p.verified_with ? " · " + (p.verified_with === "PIN" ? "PIN" : "voice") : ""}</small></span>
+    <span class="amt">−${rupees(p.amount)}<br><span class="pill ${ok ? "ok" : "bad"}">${ok ? "completed" : esc(p.status.toLowerCase())}</span></span></li>`;
+}
+function renderRecent() {
+  $("#recent").innerHTML = HISTORY.slice(0, 5).map(txRow).join("") || `<li class="empty">No payments yet. Try “Send Money”.</li>`;
+}
+function noticeRow(n) {
+  const ic = n.level === "warn" ? "alert" : n.level === "info" ? "bell" : "check";
+  return `<li><span class="ico ${n.level}">${I(ic)}</span><span class="who2"><b>${esc(n.text)}</b><small>${when(n.timestamp)}</small></span></li>`;
+}
+function renderNotices() { $("#notices").innerHTML = NOTICES.slice(0, 5).map(noticeRow).join("") || `<li class="empty">No notifications</li>`; }
+$("#allNotices").addEventListener("click", () => openSheet("Notifications", `<ul class="list notice">${NOTICES.map(noticeRow).join("") || '<li class="empty">No notifications</li>'}</ul>`));
+
+function renderAccounts() {
+  $("#acctDetails").innerHTML = `<dt>Account holder</dt><dd>${esc(ME.name)}</dd><dt>Account number</dt><dd>${esc(ME.account_number)}</dd><dt>Bank</dt><dd>${esc(ME.bank_name)}</dd>
+    <dt>Type</dt><dd>Savings</dd><dt>Balance</dt><dd>${rupees(ME.balance)}</dd><dt>Registered phone</dt><dd>${esc(ME.phone)}</dd>`;
+  const limit = Number(ME.daily_limit), spent = Number(ME.spent_today || 0);
+  $("#todayBox").innerHTML = `<div style="font:800 1.8rem var(--display)">${rupees(spent)} <span style="font:400 1rem var(--body,inherit);color:var(--slate)">of ${rupees(limit)}</span></div><div class="meter"><i style="width:${Math.min(100, spent / limit * 100)}%"></i></div>`;
+  const label = { person: "Person", biller: "Bill", recharge: "Mobile recharge", gold: "Digital gold", merchant: "Shop" };
+  $("#contactsList").innerHTML = ME.contacts.map(c => `<li><span class="ico">${I({ biller: "bill", recharge: "phone", gold: "gold" }[c.kind] || "user")}</span><span class="who2"><b>${esc(c.name)}</b><small>${esc(c.upi_id)}</small></span><span class="tag">${label[c.kind] || "Person"}</span></li>`).join("");
+}
+function filteredStatement() {
+  const who = $("#fWho").value.trim().toLowerCase(), days = Number($("#fDays").value);
+  return HISTORY.filter(p => (!who || p.recipient.toLowerCase().includes(who)) && (!days || new Date(p.timestamp) >= Date.now() - days * 864e5));
+}
+function renderStatement() {
+  const rows = filteredStatement();
+  $("#stmt").innerHTML = rows.map(txRow).join("") || `<li class="empty">No payments match.</li>`;
+  const total = rows.filter(p => p.status === "Success").reduce((a, p) => a + p.amount, 0);
+  $("#stmtTotal").textContent = `${rows.length} payment${rows.length === 1 ? "" : "s"}, ${rupees(total)} sent`;
+}
+$("#fWho").addEventListener("input", renderStatement); $("#fDays").addEventListener("change", renderStatement);
+$("#csvBtn").addEventListener("click", () => {
+  const rows = [["Date", "Paid to", "Amount (INR)", "Status", "Confirmed with"], ...filteredStatement().map(p => [new Date(p.timestamp).toLocaleString("en-IN"), p.recipient, p.amount, p.status, p.verified_with || ""])];
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `echomint-statement-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  toast("Statement downloaded");
 });
+function renderGold() {
+  const paid = HISTORY.filter(p => p.status === "Success" && p.recipient === "EchoMint Gold").reduce((a, p) => a + p.amount, 0);
+  $("#goldBox").innerHTML = `<div class="lbl" style="color:var(--slate)">You own</div><div style="font:800 2rem var(--display)">${(paid / GOLD_RATE).toFixed(3)} g</div>
+    <p style="color:var(--slate);margin:6px 0 0">Bought for ${rupees(paid)}. Demo price ${rupees(GOLD_RATE)} per gram.</p>`;
+}
+function renderProfile() {
+  $("#profileDl").innerHTML = `<dt>Name</dt><dd>${esc(ME.name)}</dd><dt>Phone</dt><dd>${esc(ME.phone)}</dd><dt>Account</dt><dd>${esc(ME.account_number)}</dd><dt>Bank</dt><dd>${esc(ME.bank_name)}</dd>`;
+  $("#cardNo").textContent = "4386 •••• •••• " + ME.account_number.slice(-4); $("#cardName").textContent = ME.name.toUpperCase();
+  $("#limitNow").textContent = `Right now you can spend up to ${rupees(ME.daily_limit)} a day.`;
+}
+function renderCalc() {
+  const m = +$("#sipAmt").value || 0, y = +$("#sipYrs").value || 0, r = (+$("#sipRate").value || 0) / 1200, n = y * 12;
+  const fv = r ? m * ((Math.pow(1 + r, n) - 1) / r) * (1 + r) : m * n;
+  $("#sipOut").innerHTML = `<div style="color:var(--slate)">After ${y} years you could have about</div><div class="big">${rupees(Math.round(fv))}</div><div style="color:var(--slate)">You put in ${rupees(m * n)}. Returns are not guaranteed.</div>`;
+  const P0 = +$("#lnAmt").value || 0, lr = (+$("#lnRate").value || 0) / 1200, ln = (+$("#lnYrs").value || 0) * 12;
+  const emi = lr ? P0 * lr * Math.pow(1 + lr, ln) / (Math.pow(1 + lr, ln) - 1) : P0 / Math.max(ln, 1);
+  $("#lnOut").innerHTML = `<div style="color:var(--slate)">Monthly payment (EMI)</div><div class="big">${rupees(Math.round(emi || 0))}</div><div style="color:var(--slate)">Total interest ${rupees(Math.round(emi * ln - P0 || 0))} over ${ln} months.</div>`;
+}
+["sipAmt", "sipYrs", "sipRate", "lnAmt", "lnRate", "lnYrs"].forEach(id => $("#" + id).addEventListener("input", renderCalc));
+$("#freeze").checked = store.get("cardFrozen") === "1";
+function renderFreeze() { $("#vcard").classList.toggle("frozen", $("#freeze").checked); $("#freezeLbl").textContent = $("#freeze").checked ? "Card is frozen" : "Freeze card"; }
+$("#freeze").addEventListener("change", () => { store.set("cardFrozen", $("#freeze").checked ? "1" : "0"); renderFreeze(); toast($("#freeze").checked ? "Card frozen" : "Card unfrozen"); });
+renderFreeze();
+
+/* ---------- sheets (pop-up forms) ---------- */
+function openSheet(title, html, onMount) {
+  $("#sheetHost").innerHTML = `<div class="sheet-bg" id="sheetBg"><div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="sheet-head"><h2>${esc(title)}</h2><button type="button" id="sheetX" aria-label="Close">${I("x")}</button></div><div id="sheetBody">${html}</div></div></div>`;
+  $("#sheetX").onclick = closeSheet;
+  $("#sheetBg").addEventListener("click", (e) => { if (e.target.id === "sheetBg") closeSheet(); });
+  if (onMount) onMount($("#sheetBody"));
+  setTimeout(() => { const f = $("#sheetBody input, #sheetBody select"); if (f) f.focus(); }, 60);
+}
+function closeSheet() { $("#sheetHost").innerHTML = ""; }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#sheetBg")) closeSheet(); });
+function toast(msg) {
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; t.setAttribute("role", "status");
+  document.body.appendChild(t); setTimeout(() => t.remove(), 3200);
+}
+const chipRow = (vals, fmt = (v) => rupees(v)) => `<div class="chips">${vals.map(v => `<button type="button" class="chip" data-v="${v}">${fmt(v)}</button>`).join("")}</div>`;
+function wireChips(body, input) { $$(".chip", body).forEach(c => c.onclick = () => { input.value = c.dataset.v; $$(".chip", body).forEach(x => x.classList.toggle("on", x === c)); input.dispatchEvent(new Event("input")); }); }
+
+/* The one way money moves from these forms: same rules as the voice agent. */
+async function pay(recipient, amount, err) {
+  err.textContent = "";
+  if (!(Number(amount) > 0)) { err.textContent = "Enter an amount."; return; }
+  const { status, data } = await api("/api/payments/", "POST", { recipient, amount, idempotency_key: uid() });
+  if (status === 403 && data.code === "voice_required") { closeSheet(); ensureVoice(); return; }
+  if (!data.ok) { err.textContent = data.message || "That didn't work."; return; }
+  if (data.code === "needs_pin") { closeSheet(); openPin({ id: data.payment_id, amount: data.amount, recipient: data.recipient }); return; }
+  if (data.code === "needs_confirmation") {
+    $("#sheetBody").innerHTML = `<p style="color:var(--slate);margin:0">Please check this before it goes</p><div class="confirm-big">Send ${rupees(data.amount)} to ${esc(data.recipient)}?</div>
+      <div class="btn-row"><button class="primary" id="yesBtn">Yes, send</button><button class="ghost" id="noBtn">Cancel</button></div><p class="err" id="cErr"></p>`;
+    $("#noBtn").onclick = async () => { await api(`/api/payments/${data.payment_id}/cancel/`, "POST"); closeSheet(); toast("Payment cancelled"); refresh(); };
+    $("#yesBtn").onclick = async () => {
+      $("#yesBtn").disabled = true;
+      const r = await api(`/api/payments/${data.payment_id}/confirm/`, "POST", {});
+      if (r.data.ok) done(r.data.message); else { $("#cErr").textContent = r.data.message || "That payment didn't go through."; refresh(); }
+    };
+    $("#yesBtn").focus();
+  }
+}
+function done(message) {
+  $("#sheetBody").innerHTML = `<div class="done"><div class="tick">${I("check")}</div><div class="confirm-big" style="font-size:1.4rem">${esc(message)}</div><button class="primary" id="okBtn">Done</button></div>`;
+  $("#okBtn").onclick = closeSheet; addMsg("bot", message, "ok"); robotHappy(); speak(message); refresh();
+}
+function moneyForm({ toLabel, options, presets, extra = "", submit = "Continue", note = "" }) {
+  return `<form id="mf" novalidate>
+    <div class="field"><label for="mfTo">${toLabel}</label><select id="mfTo">${options.map(o => `<option>${esc(o)}</option>`).join("")}</select></div>
+    ${extra}
+    <div class="field"><label for="mfAmt">Amount (₹)</label><input id="mfAmt" type="number" inputmode="decimal" min="1" step="1">${presets ? chipRow(presets) : ""}</div>
+    ${note}<button class="primary" type="submit">${submit}</button><p class="err" id="mfErr" role="alert"></p></form>`;
+}
+function wireMoney(body, recipientOf = () => $("#mfTo").value) {
+  wireChips(body, $("#mfAmt"));
+  $("#mf").onsubmit = (e) => { e.preventDefault(); pay(recipientOf(), $("#mfAmt").value, $("#mfErr")); };
+}
+const ACTIONS = {
+  send() {
+    const people = contactsOf("person").map(c => c.name);
+    openSheet("Send money", moneyForm({ toLabel: "Send to", options: people, presets: [100, 200, 500, 1000],
+      note: `<p style="color:var(--slate);margin:0 0 4px">Under ₹500 you confirm with one tap. From ₹500 you'll type your PIN.</p>` }), (b) => wireMoney(b));
+  },
+  bills() {
+    const billers = contactsOf("biller").map(c => c.name);
+    openSheet("Pay a bill", moneyForm({ toLabel: "Bill", options: billers, presets: [250, 500, 1200],
+      extra: `<div class="field"><label for="mfRef">Consumer number</label><input id="mfRef" inputmode="numeric" placeholder="Printed on your bill"></div>`, submit: "Pay bill" }), (b) => wireMoney(b));
+  },
+  recharge() {
+    const ops = contactsOf("recharge").map(c => c.name);
+    const plans = [[199, "28 days, 1.5 GB/day"], [299, "28 days, 2 GB/day"], [719, "84 days, 1.5 GB/day"]];
+    openSheet("Recharge mobile", `<form id="mf" novalidate>
+      <div class="field"><label for="mfNum">Mobile number</label><input id="mfNum" inputmode="numeric" maxlength="10" value="${esc(ME.phone)}"></div>
+      <div class="field"><label for="mfTo">Operator</label><select id="mfTo">${ops.map(o => `<option>${esc(o)}</option>`).join("")}</select></div>
+      <div class="field"><label for="mfAmt">Plan</label><input id="mfAmt" type="number" min="10" placeholder="Pick a plan or type an amount">
+      <div class="chips">${plans.map(([v, d]) => `<button type="button" class="chip" data-v="${v}">${rupees(v)} · ${d}</button>`).join("")}</div></div>
+      <button class="primary" type="submit">Recharge</button><p class="err" id="mfErr" role="alert"></p></form>`, (b) => {
+      wireChips(b, $("#mfAmt"));
+      $("#mf").onsubmit = (e) => { e.preventDefault(); if (!/^\d{10}$/.test($("#mfNum").value)) { $("#mfErr").textContent = "Enter a 10-digit mobile number."; return; } pay($("#mfTo").value, $("#mfAmt").value, $("#mfErr")); };
+    });
+  },
+  gold() {
+    openSheet("Buy digital gold", `<form id="mf" novalidate>
+      <div class="field"><label for="mfAmt">Amount (₹)</label><input id="mfAmt" type="number" min="10">${chipRow([100, 500, 1000, 2000])}</div>
+      <div class="calc-out" id="gPrev">Enter an amount to see how much gold you get.</div>
+      <button class="primary" type="submit">Buy gold</button><p class="err" id="mfErr" role="alert"></p></form>`, (b) => {
+      wireChips(b, $("#mfAmt"));
+      $("#mfAmt").addEventListener("input", () => { const v = +$("#mfAmt").value || 0; $("#gPrev").innerHTML = `You get <b>${(v / GOLD_RATE).toFixed(4)} g</b> at the demo price of ${rupees(GOLD_RATE)} per gram.`; });
+      $("#mf").onsubmit = (e) => { e.preventDefault(); pay("EchoMint Gold", $("#mfAmt").value, $("#mfErr")); };
+    });
+  },
+  invest() { showView("investments"); },
+  statements() { showView("payments"); setTimeout(() => $("#statements").scrollIntoView({ behavior: "smooth" }), 50); },
+  loans() { showView("loans"); },
+};
+
+/* ---------- profile + settings forms ---------- */
+$("#contactForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); $("#cErr").textContent = "";
+  const { status, data } = await api("/api/contacts/", "POST", { name: $("#cName").value, upi_id: $("#cUpi").value });
+  if (status === 403 && data.code === "voice_required") { ensureVoice(); return; }
+  if (data.ok) { e.target.reset(); toast(data.message); refresh(); } else $("#cErr").textContent = data.message;
+});
+$("#pinForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); const err = $("#pinErr"); err.textContent = "";
+  if ($("#newPin").value !== $("#newPin2").value) { err.textContent = "The two new PINs don't match."; return; }
+  const { status, data } = await api("/api/pin/change/", "POST", { old_pin: $("#oldPin").value, new_pin: $("#newPin").value });
+  if (status === 403 && data.code === "voice_required") { ensureVoice(); return; }
+  if (data.ok) { e.target.reset(); toast(data.message); refresh(); } else err.textContent = data.message;
+});
+$("#limitForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); const err = $("#limitErr"); err.textContent = "";
+  const { status, data } = await api("/api/settings/daily-limit/", "POST", { daily_limit: $("#newLimit").value, pin: $("#limitPin").value });
+  if (status === 403 && data.code === "voice_required") { ensureVoice(); return; }
+  if (data.ok) { e.target.reset(); toast(data.message); refresh(); } else err.textContent = data.message;
+});
+$("#lang").innerHTML = $("#langQuick").innerHTML = Object.entries(LANG_NAMES).map(([c, n]) => `<option value="${c}">${n}</option>`).join("");
+$("#engine").value = store.get("engine") || "auto"; $("#engine").onchange = () => store.set("engine", $("#engine").value);
+$("#handsFree").checked = store.get("handsFree") === "1"; $("#handsFree").onchange = () => store.set("handsFree", $("#handsFree").checked ? "1" : "0");
+$("#lang").value = store.get("lang") || "en-IN"; $("#langQuick").value = $("#lang").value; $("#speakOn").value = store.get("speakOn") || "1"; $("#textSize").value = store.get("textSize") || "";
+document.documentElement.classList.toggle("big", $("#textSize").value === "big");
+async function langChanged(code) {
+  setLang(code); stopSpeaking(); await api("/api/agent/reset/", "POST");
+  addMsg("sys", "Language: " + LANG_NAMES[code]);
+}
+$("#lang").onchange = () => langChanged($("#lang").value);
+$("#langQuick").onchange = () => langChanged($("#langQuick").value);
+$("#speakOn").onchange = () => store.set("speakOn", $("#speakOn").value);
+$("#textSize").onchange = () => { store.set("textSize", $("#textSize").value); document.documentElement.classList.toggle("big", $("#textSize").value === "big"); };
 $("#logoutBtn").addEventListener("click", async () => {
-  await api("/api/agent/reset/", "POST"); await api("/api/logout/", "POST");
-  $("#log").innerHTML = ""; stopSpeaking(); boot();
+  await api("/api/agent/reset/", "POST"); await api("/api/logout/", "POST"); stopSpeaking(); location.href = "/login/";
 });
 
-/* ---------------- chat ---------------- */
+/* ---------- assistant panel ---------- */
+$("#botIcon").innerHTML = I("bot"); $("#closeAs").innerHTML = I("x"); $("#mic").innerHTML = I("mic");
+function setAssistant(open) {
+  $("#shell").classList.toggle("closed", !open);
+  $("#fab").innerHTML = I("mic");
+  $("#fab").classList.toggle("hidden", open);        // the panel has its own close button
+  $("#fab").setAttribute("aria-label", open ? "Close the assistant" : "Open the assistant");
+  store.set("assistant", open ? "1" : "0");
+}
+$("#fab").onclick = () => setAssistant($("#shell").classList.contains("closed"));
+$("#closeAs").onclick = () => setAssistant(false);
+$("#askBtn").onclick = () => { setAssistant(true); $("#text").focus(); };
+setAssistant(store.get("assistant") !== "0" && innerWidth > 1180);
+const STATES = { ready: "Ready", listening: "Listening", thinking: "Thinking", speaking: "Speaking", confirm: "Waiting for your yes", pin: "Waiting for your PIN" };
+let BOT = null;
+function setAgent(s, detail) {
+  $("#state").dataset.s = s; $("#stateVal").textContent = detail || STATES[s];
+  if (BOT) BOT.setState({ listening: "listening", thinking: "thinking", speaking: "speaking" }[s] || (s === "confirm" ? "listening" : "idle"));
+}
+function robotLevel(v) { if (BOT) BOT.setLevel(v); }
+function robotHappy() { if (BOT) BOT.happy(2200); }
+
 function addMsg(who, text, extra = "") {
   const d = document.createElement("div");
   d.className = `msg ${who} ${extra}`.trim(); d.textContent = text;
@@ -233,8 +787,43 @@ function typing() {
   d.innerHTML = "<span></span><span></span><span></span>";
   $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight; return d;
 }
-
 let busy = false;
+const lang = () => $("#lang").value;
+
+/* Carry out what the assistant asked the page to do (open a page, a form, a setting...). */
+function runUi(list) {
+  let leaveTo = null;
+  for (const a of list || []) {
+    if (a.type === "navigate") {
+      if (a.page === "analytics") leaveTo = "/analysis/";
+      else if (a.page === "notifications") { showView("dashboard"); $("#allNotices").click(); }
+      else showView(a.page);
+    } else if (a.type === "form" && ACTIONS[a.form]) {
+      ACTIONS[a.form]();
+      setTimeout(() => {
+        if (a.recipient && $("#mfTo")) { const o = [...$("#mfTo").options].find(o => o.value.toLowerCase().includes(String(a.recipient).toLowerCase())); if (o) $("#mfTo").value = o.value; }
+        if (a.amount && $("#mfAmt")) $("#mfAmt").value = a.amount;
+      }, 80);
+    } else if (a.type === "open_analysis") leaveTo = a.url;
+    else if (a.type === "setting") applySetting(a.setting, a.value);
+    else if (a.type === "logout") leaveTo = "logout";
+    else if (a.type === "download_statement") { showView("payments"); setTimeout(() => $("#csvBtn").click(), 300); }
+    else if (a.type === "refresh") refresh();
+  }
+  return leaveTo;
+}
+function go(where) { if (where === "logout") $("#logoutBtn").click(); else if (where) location.href = where; }
+function applySetting(setting, value) {
+  if (setting === "language") setLang(value);
+  else if (setting === "spoken_replies") { $("#speakOn").value = value === "off" ? "0" : "1"; $("#speakOn").dispatchEvent(new Event("change")); }
+  else if (setting === "text_size") { $("#textSize").value = value === "extra_large" ? "big" : ""; $("#textSize").dispatchEvent(new Event("change")); }
+  else if (setting === "card_frozen") { $("#freeze").checked = value === "on"; $("#freeze").dispatchEvent(new Event("change")); }
+}
+function setLang(code) {
+  if (!LANG_NAMES[code]) return;
+  $("#lang").value = code; $("#langQuick").value = code; store.set("lang", code);
+}
+
 async function send(text) {
   text = (text || "").trim(); if (!text || busy) return;
   busy = true; stopSpeaking(); addMsg("me", text);
@@ -245,21 +834,24 @@ async function send(text) {
   });
   t.remove(); busy = false;
   if (status === 401) { boot(); return; }
+  if (status === 403 && data.code === "voice_required") { setAgent("ready"); addMsg("sys", "Please verify your voice first."); ensureVoice(); return; }
   const reply = data.reply || data.message || "Sorry, something went wrong.";
-  addMsg("bot", reply);
-  if (data.debug_error) addMsg("sys", "debug: " + data.debug_error);
-  if (data.balance !== undefined) setBalance(data.balance);
-  loadHistory();
-
-  const p = data.pending_payment;
-  if (p && p.needs_pin) {
-    speak(reply, () => openPin(p));
-    openPin(p);                       // show the pad right away; don't wait for speech
-  } else if (p) {
-    speak(reply, () => startListening());   // waiting for a spoken "yes" -> listen again
-  } else {
-    speak(reply);
+  const m = addMsg("bot", reply);
+  if (data.analysis) {
+    const b = document.createElement("a"); b.className = "open-analysis"; b.href = data.analysis.url;
+    b.innerHTML = `${I("chart")}<span>Open analysis</span>`; m.appendChild(b); $("#log").scrollTop = $("#log").scrollHeight;
   }
+  if (data.debug_error) addMsg("sys", "debug: " + data.debug_error);
+  if (data.ms !== undefined) $("#speed").textContent = `Answered in ${((performance.now() - t0) / 1000).toFixed(2)} s${data.source === "instant" ? " (instant)" : ""}`;
+  if (data.balance !== undefined) setBalance(data.balance);
+  refresh();
+  const leave = runUi(data.ui);
+  if (/^(Done|हो गया)/.test(reply) && data.ui && data.ui.some(u => u.type === "refresh")) robotHappy();
+  const p = data.pending_payment;
+  if (leave) { speak(reply, () => go(leave)); setTimeout(() => go(leave), 4500); return; }
+  if (p && p.needs_pin) { setAgent("pin", `PIN for ${rupees(p.amount)} to ${p.recipient}`); speak(reply); openPin(p); }
+  else if (p) { setAgent("confirm", `Say yes: ${rupees(p.amount)} to ${p.recipient}`); speak(reply, () => startListening()); }
+  else { setAgent("ready"); speak(reply, () => { if ($("#handsFree").checked) startListening(); }); }
 }
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#text").value; $("#text").value = ""; send(v); });
 $("#lang").addEventListener("change", async () => {
@@ -432,9 +1024,9 @@ function fallbackSTT() {
   rec.onerror = (e) => {
     setListening(false);
     if (e.error === "not-allowed") addMsg("sys", "Please allow microphone access in your browser.");
-    else if (e.error === "network") addMsg("sys", "Speech recognition needs internet. You can type instead.");
+    else if (e.error === "network") { if (SARVAM) { $("#engine").value = "sarvam"; sarvamListen(); } else addMsg("sys", "Speech recognition needs internet. You can type instead."); }
   };
-  rec.onend = () => { setListening(false); if (finalText) send(finalText); };
+  rec.onend = () => { setListening(false); robotLevel(0); $("#heard").textContent = ""; if (finalText) send(finalText); };
   try { rec.start(); setListening(true); } catch (e) { setListening(false); }
 }
 
@@ -516,7 +1108,6 @@ function stopSpeaking() {
 
 /* ---------------- PIN pad ---------------- */
 let pin = "", pending = null, pinBusy = false;
-
 function buildPad() {
   const keys = ["1","2","3","4","5","6","7","8","9","Cancel","0","⌫"];
   const pad = $("#pad");
@@ -527,21 +1118,19 @@ function buildPad() {
   }
 }
 function renderDots() { [...$("#dots").children].forEach((d, i) => d.classList.toggle("on", i < pin.length)); }
-
 function openPin(p) {
   if (!$("#pinOverlay").classList.contains("hidden") && pending && pending.id === p.id) return;
   pending = p; pin = ""; renderDots(); $("#pinMsg").textContent = "";
   $("#pinSub").textContent = `Pay ${rupees(p.amount)} to ${p.recipient}`;
-  $("#pinOverlay").classList.remove("hidden");
+  $("#pinOverlay").classList.remove("hidden"); setAgent("pin", `PIN for ${rupees(p.amount)} to ${p.recipient}`);
 }
-function closePin() { $("#pinOverlay").classList.add("hidden"); pin = ""; pending = null; }
-
+function closePin() { $("#pinOverlay").classList.add("hidden"); pin = ""; pending = null; setAgent("ready"); }
 async function pressKey(k) {
   if (pinBusy || !pending) return;
   if (k === "Cancel") {
     const id = pending.id; closePin();
     await api(`/api/payments/${id}/cancel/`, "POST");
-    addMsg("bot", "Okay, I've cancelled that payment."); speak("Okay, I've cancelled that payment."); return;
+    addMsg("bot", "Okay, I've cancelled that payment."); speak("Okay, I've cancelled that payment."); refresh(); return;
   }
   if (k === "⌫") pin = pin.slice(0, -1);
   else if (pin.length < 4) pin += k;
@@ -553,14 +1142,14 @@ async function submitPin() {
   const { data } = await api(`/api/payments/${pending.id}/confirm/`, "POST", { pin });
   pinBusy = false;
   if (data.ok) {
-    closePin(); addMsg("bot", data.message, "ok"); speak(data.message);
-    if (data.new_balance !== undefined) setBalance(data.new_balance); loadHistory();
+    closePin(); addMsg("bot", data.message, "ok"); robotHappy(); speak(data.message); toast(data.message);
+    if (data.new_balance !== undefined) setBalance(data.new_balance); refresh();
   } else if (data.code === "wrong_pin") {
     $("#pinMsg").textContent = data.message; pin = ""; renderDots();
     $("#dots").classList.remove("shake"); void $("#dots").offsetWidth; $("#dots").classList.add("shake");
   } else {
-    closePin(); addMsg("bot", data.message || "That payment didn't go through."); speak(data.message || "");
-    loadHistory();
+    closePin(); addMsg("bot", data.message || "That payment didn't go through."); speak(data.message || ""); toast(data.message || "That payment didn't go through.");
+    refresh();
   }
 }
 document.addEventListener("keydown", (e) => {
@@ -570,7 +1159,214 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "Escape") pressKey("Cancel");
 });
 
+/* ---------------- voice security: record, enroll, verify ---------------- */
+const TARGET_RATE = 16000;
+let vMode = null, enrollClips = [], vBusy = false, vFails = 0, vEnrollPin = null, vCanCancel = false;
+
+function mergeChunks(chunks) {
+  let n = 0; chunks.forEach(c => n += c.length);
+  const out = new Float32Array(n); let o = 0;
+  chunks.forEach(c => { out.set(c, o); o += c.length; }); return out;
+}
+function downsample(buf, from, to) {           // simple averaging filter
+  if (from === to) return buf;
+  const ratio = from / to, n = Math.floor(buf.length / ratio), out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(i * ratio), b = Math.min(Math.floor((i + 1) * ratio), buf.length);
+    let sum = 0; for (let j = a; j < b; j++) sum += buf[j];
+    out[i] = sum / Math.max(1, b - a);
+  }
+  return out;
+}
+function encodeWav(samples, rate) {            // 16-bit PCM mono WAV
+  const buf = new ArrayBuffer(44 + samples.length * 2), v = new DataView(buf);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, samples.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++, o += 2) {
+    const x = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7FFF, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+/* Records until the person has finished speaking (about a second of silence after
+   the digits), so there is no fixed wait. Gives up after maxSeconds. */
+async function recordSmart(onLevel, maxSeconds = 10) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  try { await ctx.resume(); } catch (e) {}
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  const t0 = performance.now();
+  let floor = null, seen = 0, speechMs = 0, lastVoice = 0, started = false;
+  const done = new Promise((resolve) => {
+    proc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(d));
+      let s = 0; for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+      const rms = Math.sqrt(s / d.length), ms = d.length / ctx.sampleRate * 1000, now = performance.now();
+      onLevel(Math.min(rms * 6, 1));
+      if (seen < 4) { floor = floor === null ? rms : Math.min(floor, rms); seen++; return; }
+      if (rms > Math.min(Math.max(0.02, floor * 3), 0.05)) { started = true; speechMs += ms; lastVoice = now; }
+      const elapsed = now - t0;
+      if ((started && speechMs >= 1200 && now - lastVoice > 900) || elapsed > maxSeconds * 1000
+          || (!started && elapsed > 6500)) resolve();
+    };
+  });
+  src.connect(proc); proc.connect(ctx.destination);
+  await done;
+  proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t => t.stop());
+  const rate = ctx.sampleRate; await ctx.close();
+  return encodeWav(downsample(mergeChunks(chunks), rate, TARGET_RATE), TARGET_RATE);
+}
+async function upload(url, blobs, extra = {}) {
+  const fd = new FormData(); blobs.forEach((b, i) => fd.append("audio", b, `clip${i}.wav`));
+  Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
+  const res = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": csrf() }, body: fd });
+  let data = {}; try { data = await res.json(); } catch (e) {}
+  return { status: res.status, data };
+}
+
+function vSay(text, kind) { const m = $("#vMsg"); m.textContent = text || ""; m.className = kind || ""; }
+function vShow(sel, on) { $(sel).classList.toggle("hidden", !on); }
+async function newChallenge(n) {
+  const { data } = await api("/api/voice/challenge/?n=" + n);
+  $("#vDigits").textContent = data.spoken || "– – – – – –";
+}
+async function ensureVoice() {
+  const { status, data } = await api("/api/voice/status/");
+  if (status === 200) SARVAM = !!data.sarvam;
+  if (status !== 200 || !data.required || data.verified) return;
+  if (!data.engine_available) { openVoice("error"); return; }
+  openVoice(data.enrolled ? "verify" : "enroll");
+}
+function setEnrollTitle() { $("#vStep").textContent = `Voice setup · Sample ${enrollClips.length + 1} of 3`; }
+
+async function openVoice(mode, opts = {}) {
+  vMode = mode; enrollClips = []; vBusy = false; vFails = 0; vEnrollPin = opts.pin || null; vCanCancel = !!opts.cancel;
+  stopSpeaking(); if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
+  $("#vBar").style.width = "0"; vSay(""); $("#vPin").value = "";
+  vShow("#vPinBox", false); vShow("#vPinLink", false); vShow("#vCancel", vCanCancel);
+  vShow("#vBtn", true); $("#vBtn").disabled = false; vShow("#vDigits", true);
+  if (mode === "error") {
+    $("#vStep").textContent = "Voice security";
+    $("#vTitle").textContent = "Voice engine not ready";
+    $("#vSub").textContent = "The server is missing the voice model (torch + speechbrain).";
+    vShow("#vDigits", false); vShow("#vBtn", false); vShow("#vPinLink", true);
+    vSay("Install it with: pip install torch torchaudio speechbrain — or use your PIN to continue.", "bad");
+  } else if (mode === "enroll") {
+    setEnrollTitle();
+    $("#vTitle").textContent = "Teach EchoMint your voice";
+    $("#vSub").textContent = "Read the digits in your normal voice, like you're talking to a friend. We keep a voiceprint, never the recording.";
+    await newChallenge(8);
+  } else {
+    $("#vStep").textContent = "Voice check";
+    $("#vTitle").textContent = "Say the digits to unlock";
+    $("#vSub").textContent = "Read these digits out loud. This proves it's really you, speaking right now.";
+    vShow("#vPinLink", true);
+    await newChallenge(6);
+  }
+  $("#voiceOverlay").classList.remove("hidden");
+  autoStartIfAllowed();
+}
+function closeVoice() { $("#voiceOverlay").classList.add("hidden"); }
+
+/* If the mic is already allowed, start listening by itself: nothing to tap. */
+async function autoStartIfAllowed() {
+  try {
+    const p = await navigator.permissions.query({ name: "microphone" });
+    if (p.state === "granted" && !vBusy && vMode && vMode !== "error"
+        && $("#vPinBox").classList.contains("hidden")) setTimeout(() => { if (!vBusy) onRecordClick(); }, 600);
+  } catch (e) { /* tap the button instead */ }
+}
+
+async function onRecordClick() {
+  if (vBusy) return; vBusy = true; $("#vBtn").disabled = true; vSay("Listening… read the digits now");
+  let clip;
+  try { clip = await recordSmart(l => { $("#vBar").style.width = (l * 100) + "%"; }); }
+  catch (e) { vBusy = false; $("#vBtn").disabled = false; $("#vBar").style.width = "0";
+              vSay("I couldn't use the microphone. Please allow microphone access and try again.", "bad"); return; }
+  $("#vBar").style.width = "0";
+
+  if (vMode === "enroll") {
+    enrollClips.push(clip);
+    if (enrollClips.length < 3) {
+      setEnrollTitle(); vSay("Got it. Now read the new digits.", "good"); await newChallenge(8);
+      vBusy = false; $("#vBtn").disabled = false; autoStartIfAllowed(); return;
+    }
+    vSay("Saving your voice…");
+    const { data } = await upload("/api/voice/enroll/", enrollClips, vEnrollPin ? { pin: vEnrollPin } : {});
+    if (data.ok) {
+      vSay(data.message, "good");
+      setTimeout(() => { closeVoice(); addMsg("bot", "Your voice is saved and you're verified. How can I help?"); }, 700);
+    } else {
+      enrollClips = []; setEnrollTitle();
+      vSay((data.message || "That didn't work.") + " Let's start again.", "bad"); await newChallenge(8);
+      vBusy = false; $("#vBtn").disabled = false;
+      if (data.fallback_pin) vShow("#vPinLink", true);
+    }
+    return;
+  }
+
+  vSay("Checking…");
+  const { status, data } = await upload("/api/voice/verify/", [clip]);
+  if (data.ok) {
+    vSay("Verified ✓", "good");
+    setTimeout(() => { closeVoice(); addMsg("bot", "You're verified. How can I help?", "ok"); }, 450);
+  } else {
+    vFails++;
+    let m = data.message || "Verification failed.";
+    if (location.hash === "#debug" && data.debug_similarity !== undefined) m += ` [debug: ${data.debug_similarity}]`;
+    vSay(m, "bad");
+    if (vFails >= 1 || data.fallback_pin) vShow("#vPinLink", true);
+    if (status !== 423) await newChallenge(6);
+    vBusy = false; $("#vBtn").disabled = status === 423;
+  }
+}
+$("#vBtn").addEventListener("click", onRecordClick);
+
+/* ----- backup: PIN instead of voice, and PIN-protected re-recording ----- */
+$("#vPinLink").addEventListener("click", () => {
+  vShow("#vPinBox", true); vShow("#vPinLink", false); $("#vPin").focus(); vSay("");
+});
+$("#vPinBack").addEventListener("click", () => {
+  vShow("#vPinBox", false); vShow("#vPinLink", true);
+  const ok = vMode !== "error"; vShow("#vBtn", ok); vShow("#vDigits", ok);
+});
+$("#vCancel").addEventListener("click", closeVoice);
+let pinGoBusy = false;
+$("#vPinGo").addEventListener("click", async () => {
+  const pinv = $("#vPin").value.trim(); if (pinv.length !== 4) { vSay("Enter your 4-digit PIN.", "bad"); return; }
+  if (pinGoBusy) return; pinGoBusy = true; $("#vPinGo").disabled = true;
+  const { data } = await api("/api/voice/fallback/", "POST", { pin: pinv });
+  pinGoBusy = false; $("#vPinGo").disabled = false;
+  if (data.ok) { vSay("PIN accepted ✓", "good"); setTimeout(() => { closeVoice(); addMsg("bot", "You're in. How can I help?", "ok"); }, 450); }
+  else vSay(data.message || "That PIN didn't work.", "bad");
+});
+$("#vPinRe").addEventListener("click", async () => {
+  const pinv = $("#vPin").value.trim(); if (pinv.length !== 4) { vSay("Enter your 4-digit PIN.", "bad"); return; }
+  openVoice("enroll", { pin: pinv, cancel: true });
+});
+$("#reVoice").addEventListener("click", () => {
+  openVoice("verify", { cancel: true });
+  vShow("#vPinBox", true); vShow("#vPinLink", false); vShow("#vBtn", false); vShow("#vDigits", false);
+  $("#vTitle").textContent = "Re-record your voice"; $("#vSub").textContent = "Enter your PIN to teach EchoMint your voice again.";
+  $("#vPin").focus();
+});
+
+showView(location.hash.slice(1));
 buildPad(); boot();
+window.attachBot = (b) => { BOT = b; setAgent($("#state").dataset.s); };
+</script>
+<script type="module">
+  import { initRobot } from "{% static 'bank/robot.js' %}";
+  window.attachBot(initRobot(document.getElementById("robot")));
 </script>
 </body>
 </html>

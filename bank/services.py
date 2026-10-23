@@ -11,6 +11,7 @@ Authentication rule (decided by the team):
     amount <  500  -> user just says "yes" (voice confirmation)
     amount >= 500  -> user must enter their 4-digit PIN on screen (like UPI)
 """
+import re
 import uuid
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -19,6 +20,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
+from .categories import categorize
 from .models import Account, AuditLog, Payment
 
 PIN_THRESHOLD = Decimal("500")      # below this: voice confirm; at/above: PIN
@@ -157,6 +159,7 @@ def initiate_payment(account: Account, recipient_name, amount, idempotency_key=N
             account=account, contact=contact, recipient_name=contact.name,
             upi_id=contact.upi_id, amount=amount, auth_required=auth,
             idempotency_key=idempotency_key or None,
+            category=categorize(contact.name, contact.kind),
         )
     except IntegrityError:  # two identical requests raced each other
         existing = account.payments.filter(idempotency_key=idempotency_key).first()
@@ -194,6 +197,34 @@ def _describe_existing(payment: Payment) -> dict:
 
 
 # -------------------------------------------------------------- step 2: confirm
+
+def verify_pin(acct, pin) -> dict:
+    """Check the account PIN with the same wrong-attempt lockout the payments use.
+    Used as the backup way in when the voice check can't be passed."""
+    now = timezone.now()
+    with transaction.atomic():
+        acct = type(acct).objects.select_for_update().get(pk=acct.pk)
+        if acct.pin_locked_until and acct.pin_locked_until > now:
+            mins = int((acct.pin_locked_until - now).total_seconds() // 60) + 1
+            return _result(False, "pin_locked", f"Too many wrong PINs. Try again in {mins} minutes.")
+        if not pin or not acct.check_pin(str(pin)):
+            acct.pin_failed_attempts += 1
+            _audit(acct, "wrong_pin", context="voice_fallback", attempts=acct.pin_failed_attempts)
+            if acct.pin_failed_attempts >= MAX_PIN_ATTEMPTS:
+                acct.pin_locked_until = now + PIN_LOCK_DURATION
+                acct.pin_failed_attempts = 0
+                acct.save()
+                _audit(acct, "pin_locked")
+                return _result(False, "pin_locked", "Wrong PIN too many times. Locked for 15 minutes.")
+            acct.save()
+            left = MAX_PIN_ATTEMPTS - acct.pin_failed_attempts
+            return _result(False, "wrong_pin",
+                           f"Wrong PIN. You have {left} attempt{'s' if left != 1 else ''} left.")
+        acct.pin_failed_attempts = 0
+        acct.pin_locked_until = None
+        acct.save()
+    return _result(True, "pin_ok", "PIN accepted.")
+
 
 def confirm_payment(account: Account, payment_id, pin=None) -> dict:
     """Move the money. One database transaction: it all happens or none of it."""
@@ -337,7 +368,8 @@ def get_user_details(account: Account) -> dict:
         "balance": str(account.balance),
         "currency": account.currency,
         "daily_limit": str(account.daily_limit),
-        "contacts": [{"name": c.name, "upi_id": c.upi_id} for c in account.contacts.all()],
+        "spent_today": str(_spent_today(account)),
+        "contacts": [{"name": c.name, "upi_id": c.upi_id, "kind": c.kind} for c in account.contacts.all()],
     }
 
 
@@ -357,6 +389,7 @@ def get_history(account: Account, limit=20, recipient=None, days=None) -> list:
             "status": p.get_status_display(),
             "timestamp": p.created_at.isoformat(),
             "verified_with": p.auth_used or None,
+            "category": p.category,
         }
         for p in qs[: int(limit)]
     ]
@@ -382,3 +415,142 @@ def spending_summary(account: Account, recipient=None, days=None) -> dict:
             for r in by_recipient
         ],
     }
+
+
+# ------------------------------------------------------------- account settings
+
+MIN_DAILY_LIMIT = Decimal("500")
+MAX_DAILY_LIMIT = Decimal("100000")
+
+
+def change_pin(acct, old_pin, new_pin) -> dict:
+    new_pin = str(new_pin or "")
+    if not (len(new_pin) == 4 and new_pin.isdigit()):
+        return _result(False, "bad_pin", "Your new PIN must be exactly 4 digits.")
+    if new_pin in ("0000", "1111", "1234", "4321") or len(set(new_pin)) == 1:
+        return _result(False, "weak_pin", "That PIN is too easy to guess. Please choose another.")
+    checked = verify_pin(acct, old_pin)
+    if not checked["ok"]:
+        return checked
+    acct = type(acct).objects.get(pk=acct.pk)
+    acct.set_pin(new_pin)
+    acct.save()
+    _audit(acct, "pin_changed")
+    return _result(True, "pin_changed", "Your PIN has been changed.")
+
+
+def set_daily_limit(acct, limit, pin) -> dict:
+    try:
+        limit = _money(limit)
+    except Exception:  # noqa: BLE001
+        return _result(False, "invalid_amount", "Please enter the limit as a number.")
+    if not (MIN_DAILY_LIMIT <= limit <= MAX_DAILY_LIMIT):
+        return _result(False, "invalid_amount",
+                       f"The daily limit must be between {fmt(MIN_DAILY_LIMIT)} and {fmt(MAX_DAILY_LIMIT)}.")
+    checked = verify_pin(acct, pin)
+    if not checked["ok"]:
+        return checked
+    acct = type(acct).objects.get(pk=acct.pk)
+    old = acct.daily_limit
+    acct.daily_limit = limit
+    acct.save()
+    _audit(acct, "daily_limit_changed", old=str(old), new=str(limit))
+    return _result(True, "limit_changed", f"Your daily limit is now {fmt(limit)}.", daily_limit=str(limit))
+
+
+def _fmt_str(v) -> str:
+    try:
+        return fmt(Decimal(str(v)))
+    except Exception:  # noqa: BLE001
+        return f"₹{v}"
+
+
+NOTICE_TEXT = {
+    "payment_success": lambda d: f"Paid {_fmt_str(d.get('amount'))} to {d.get('recipient', 'a contact')}",
+    "wrong_pin": lambda d: "A wrong PIN was entered",
+    "pin_locked": lambda d: "PIN payments were locked after too many wrong PINs",
+    "pin_changed": lambda d: "Your PIN was changed",
+    "daily_limit_changed": lambda d: f"Daily limit changed to {_fmt_str(d.get('new'))}",
+    "voice_failed": lambda d: "A voice check did not match",
+    "voice_enrolled": lambda d: "Your voice was saved",
+    "voice_fallback_pin": lambda d: "You signed in with your PIN instead of your voice",
+    "payment_expired": lambda d: "A payment request expired before it was confirmed",
+    "contact_added": lambda d: f"{d.get('name', 'A contact')} was added to your contacts",
+    "signed_up": lambda d: "Welcome to EchoMint! Your account is ready",
+}
+NOTICE_LEVEL = {"contact_added": "info", "signed_up": "info", "wrong_pin": "warn", "pin_locked": "warn", "voice_failed": "warn",
+                "pin_changed": "info", "daily_limit_changed": "info"}
+
+
+def notifications(acct, limit=8) -> list:
+    rows = AuditLog.objects.filter(account=acct, event__in=list(NOTICE_TEXT)).order_by("-created_at")[:limit]
+    return [{"text": NOTICE_TEXT[r.event](r.detail or {}), "level": NOTICE_LEVEL.get(r.event, "ok"),
+             "timestamp": r.created_at.isoformat()} for r in rows]
+
+
+# ------------------------------------------------------------- sign up + contacts
+
+STARTER_BALANCE = Decimal("10000")   # demo money for new accounts in this prototype
+DEFAULT_PAYEES = [  # every new account can pay these bills from day one
+    ("Adani Electricity", "adanielectricity@billpay", "biller"),
+    ("Delhi Jal Board", "djb@billpay", "biller"),
+    ("Indraprastha Gas", "igl@billpay", "biller"),
+    ("Airtel Broadband", "airtelbroadband@billpay", "biller"),
+    ("Jio Prepaid", "jio@recharge", "recharge"),
+    ("Airtel Prepaid", "airtel@recharge", "recharge"),
+    ("Vi Prepaid", "vi@recharge", "recharge"),
+    ("EchoMint Gold", "gold@echomint", "gold"),
+]
+WEAK_PINS = {"0000", "1111", "1234", "4321", "1212", "0123", "9999", "2580"}
+
+
+def create_customer(full_name, phone, password, pin) -> dict:
+    """Open a new account (sign up). Returns {"ok", "phone", ...}."""
+    import secrets as _secrets
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    full_name = " ".join(str(full_name or "").split())
+    phone = re.sub(r"\D", "", str(phone or ""))[-10:]
+    password = str(password or "")
+    pin = str(pin or "")
+    if not (2 <= len(full_name) <= 80):
+        return _result(False, "bad_name", "Please enter your full name.")
+    if not re.fullmatch(r"[6-9]\d{9}", phone):
+        return _result(False, "bad_phone", "Please enter a 10-digit Indian mobile number.")
+    if len(password) < 6:
+        return _result(False, "bad_password", "Your password needs at least 6 characters.")
+    if not re.fullmatch(r"\d{4}", pin):
+        return _result(False, "bad_pin", "Your PIN must be exactly 4 digits.")
+    if pin in WEAK_PINS or len(set(pin)) == 1:
+        return _result(False, "weak_pin", "That PIN is too easy to guess. Please choose another.")
+    if User.objects.filter(username=phone).exists() or Account.objects.filter(phone=phone).exists():
+        return _result(False, "phone_taken", "An account with this phone number already exists. Please log in.")
+    with transaction.atomic():
+        user = User.objects.create_user(username=phone, password=password)
+        number = None
+        while number is None or Account.objects.filter(account_number=number).exists():
+            number = str(_secrets.randbelow(9 * 10**11) + 10**11)
+        acct = Account(user=user, full_name=full_name, phone=phone, account_number=number,
+                       bank_name="Lotus Bank", balance=STARTER_BALANCE)
+        acct.set_pin(pin)
+        acct.save()
+        from .models import Contact
+        for name, upi, kind in DEFAULT_PAYEES:
+            Contact.objects.create(account=acct, name=name, upi_id=upi, kind=kind)
+        _audit(acct, "signed_up")
+    return _result(True, "signed_up", f"Welcome to EchoMint, {full_name.split()[0]}!", phone=phone)
+
+
+def add_contact(acct, name, upi_id) -> dict:
+    from .models import Contact
+    name = " ".join(str(name or "").split())[:60]
+    upi_id = str(upi_id or "").strip().lower()
+    if len(name) < 2:
+        return _result(False, "bad_name", "Please enter the person's name.")
+    if not re.fullmatch(r"[a-z0-9._-]{2,64}@[a-z][a-z0-9.]{1,32}", upi_id):
+        return _result(False, "bad_upi", "Please enter a valid UPI ID, like name@okbank.")
+    if acct.contacts.filter(name__iexact=name).exists():
+        return _result(False, "contact_exists", f"You already have a contact called {name}.")
+    Contact.objects.create(account=acct, name=name, upi_id=upi_id, kind="person")
+    _audit(acct, "contact_added", name=name)
+    return _result(True, "contact_added", f"{name} has been added to your contacts.")

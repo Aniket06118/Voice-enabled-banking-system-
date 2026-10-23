@@ -19,8 +19,12 @@ from asgiref.sync import async_to_sync, sync_to_async
 from langchain.agents import create_agent
 from langchain_core.tools import tool
 
+from django.utils import timezone
+
 from . import services
-from .models import Payment
+from .analysis import build_analysis, normalize_category, save_request
+from .categories import CATEGORIES
+from .models import Analysis, Payment
 
 log = logging.getLogger(__name__)
 
@@ -87,8 +91,10 @@ def db_tool(fn):
     return tool(wrapper)
 
 
-def build_tools(account):
-    """Create the tool set for ONE account (closures capture `account`)."""
+def build_tools(account, ui: list = None):
+    """Create the tool set for ONE account (closures capture `account`).
+    `ui` collects instructions for the web page (open a page, show an analysis...)."""
+    ui = ui if ui is not None else []
 
     @db_tool
     def get_user_details() -> str:
@@ -147,8 +153,58 @@ def build_tools(account):
             return "There is no payment waiting for confirmation."
         return services.cancel_payment(account, pending.id)["message"]
 
+    @db_tool
+    def analyze_spending(category: str = "all", period: str = "last_30_days") -> str:
+        """Build a spending analysis with charts. category: one of food, travel,
+        shopping, bills, entertainment, health, groceries, transfers, other, or all.
+        period: this_month, last_month, last_7_days, last_30_days, last_3_months,
+        last_6_months, this_year or last_year."""
+        params = {"category": normalize_category(category), "period": period or "last_30_days"}
+        spec = build_analysis(account, params["category"], params["period"])
+        saved = save_request(account, params["category"], params["period"])
+        ui.append({"type": "analysis", "id": saved["id"], "url": saved["url"], "title": spec["title"]})
+        if spec["empty"]:
+            return spec["message"] + " The analysis page is ready anyway."
+        return f"Analysis ready: {spec['title']}. The user can tap Open analysis to see the charts."
+
+    @tool
+    def navigate(page: str) -> str:
+        """Open a page of the banking app: dashboard, accounts, payments,
+        investments, cards, loans, support, profile, settings, analytics,
+        notifications."""
+        page = str(page or "").lower().strip()
+        if page not in PAGES:
+            return f"Unknown page. Pages: {', '.join(PAGES)}."
+        ui.append({"type": "navigate", "page": page})
+        return f"Opened {page}."
+
+    @tool
+    def open_form(form: str, recipient: Optional[str] = None, amount: Optional[float] = None) -> str:
+        """Open a form so the user can do it by hand: send (send money), bills
+        (pay a bill), recharge (mobile recharge) or gold (buy digital gold).
+        Optional recipient/amount pre-fill the form. Does NOT move money."""
+        form = str(form or "").lower().strip()
+        if form not in FORMS:
+            return f"Unknown form. Forms: {', '.join(FORMS)}."
+        ui.append({"type": "form", "form": form, "recipient": recipient, "amount": amount})
+        return f"Opened the {form} form."
+
+    @tool
+    def change_setting(setting: str, value: str) -> str:
+        """Change an app setting. setting: language (value: a code like hi-IN,
+        en-IN, ta-IN), spoken_replies (on/off), text_size (large/extra_large),
+        card_frozen (on/off)."""
+        setting, value = str(setting).lower().strip(), str(value).strip()
+        ok = {"language": value in LANG_MAP, "spoken_replies": value.lower() in ("on", "off"),
+              "text_size": value.lower() in ("large", "extra_large"), "card_frozen": value.lower() in ("on", "off")}
+        if not ok.get(setting):
+            return "That setting or value is not supported."
+        ui.append({"type": "setting", "setting": setting, "value": value})
+        return f"{setting} set to {value}."
+
     return [get_user_details, get_payment_history, get_spending_summary,
-            start_payment, confirm_pending_payment, cancel_pending_payment]
+            start_payment, confirm_pending_payment, cancel_pending_payment,
+            analyze_spending, navigate, open_form, change_setting]
 
 
 def model_names() -> list:
@@ -193,6 +249,7 @@ def run_chat(account, history: list, message: str, lang: str = "en-IN") -> dict:
     tools = build_tools(account)
 
     for name in model_names():
+        ui = []
         try:
             agent = create_agent(model=get_model(name), system_prompt=system_prompt, tools=tools)
             messages = list(history) + [{"role": "user", "content": message}]
@@ -202,7 +259,7 @@ def run_chat(account, history: list, message: str, lang: str = "en-IN") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.exception("Agent failed with model %s", name)
             last_error = f"{type(exc).__name__}: {exc}"
-    return {"reply": FALLBACK_REPLY, "error": last_error}
+    return {"reply": FALLBACK_REPLY, "error": last_error, "ui": []}
 
 
 def pending_payload(account):

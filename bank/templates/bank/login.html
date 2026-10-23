@@ -1,0 +1,117 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in to EchoMint</title>
+<link rel="stylesheet" href="{% static 'bank/fonts/fonts.css' %}">
+<link rel="stylesheet" href="{% static 'bank/site.css' %}">
+</head>
+<body>
+<main class="login-page">
+  <div class="paths" id="paths" aria-hidden="true"></div>
+
+  <div class="login-inner">
+    <h1 class="wordmark" data-split>EchoMint</h1>
+    <p class="lede">Log in, then just talk.</p>
+
+    <form class="login-card" id="loginForm" novalidate>
+      <label for="phone">Phone number</label>
+      <input id="phone" name="phone" inputmode="numeric" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <span class="ring"><button class="btn btn-ink" type="submit" id="go"><span class="dot" aria-hidden="true"></span>Log in</button></span>
+      <p class="login-error" id="err" role="alert"></p>
+      <div class="login-foot">
+        <button type="button" class="linkish" id="demo">Use the demo account</button>
+        <a href="/signup/">Create an account</a>
+      </div>
+    </form>
+  </div>
+</main>
+
+<script>
+  // Wordmark letters
+  document.querySelectorAll("[data-split]").forEach(el => {
+    const word = el.textContent; el.setAttribute("aria-label", word); el.textContent = "";
+    [...word].forEach((c, i) => { const s = document.createElement("span"); s.className = "ch"; s.style.setProperty("--i", i); s.textContent = c; s.setAttribute("aria-hidden", "true"); el.appendChild(s); });
+  });
+
+  // Floating background paths (from the "Background Paths" component), drawn on ONE canvas.
+  // Animating 72 SVG paths made the browser repaint the whole page every frame (lag + glitches);
+  // a canvas keeps all that work in one layer.
+  (function paths() {
+    const host = document.getElementById("paths");
+    const cv = document.createElement("canvas"); host.appendChild(cv);
+    const ctx = cv.getContext("2d");
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const NS = "http://www.w3.org/2000/svg", probe = document.createElementNS(NS, "svg");
+    probe.style.cssText = "position:absolute;width:0;height:0;visibility:hidden"; document.body.appendChild(probe);
+    const lines = [];
+    for (const [position, rgb, mul] of [[1, "22,24,29", 0.85], [-1, "47,86,232", 0.55]]) {
+      for (let i = 0; i < 36; i++) {
+        const a = 380 - i * 5 * position, b = 189 + i * 6, c = 312 - i * 5 * position, d = 216 - i * 6,
+              e = 152 - i * 5 * position, f = 343 - i * 6, g = 616 - i * 5 * position, h = 470 - i * 6,
+              k = 684 - i * 5 * position, l = 875 - i * 6;
+        const dstr = `M-${a} -${b}C-${a} -${b} -${c} ${d} ${e} ${f}C${g} ${h} ${k} ${l} ${k} ${l}`;
+        const el = document.createElementNS(NS, "path"); el.setAttribute("d", dstr); probe.appendChild(el);
+        lines.push({ path: new Path2D(dstr), len: el.getTotalLength(), width: 0.5 + i * 0.03,
+                     alpha: mul * (0.1 + i * 0.03), color: `rgb(${rgb})`,
+                     period: (20 + Math.random() * 10) * 1000, phase: Math.random() });
+      }
+    }
+    probe.remove();
+    let W = 0, H = 0, dpr = 1, scale = 1, ox = 0, oy = 0;
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 1.5); W = innerWidth; H = innerHeight;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      cv.style.width = W + "px"; cv.style.height = H + "px";
+      scale = Math.max(W / 696, H / 316); ox = (W - 696 * scale) / 2; oy = (H - 316 * scale) / 2;   // "slice" fit
+      draw(performance.now());
+    }
+    function draw(now) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+      for (const ln of lines) {
+        const p = still ? 0.25 : ((now / ln.period) + ln.phase) % 1;     // 0..1 through one loop
+        ctx.globalAlpha = ln.alpha * (0.3 + 0.3 * Math.sin(p * Math.PI)); // 0.3 -> 0.6 -> 0.3
+        ctx.strokeStyle = ln.color; ctx.lineWidth = ln.width;
+        ctx.setLineDash([ln.len, ln.len]); ctx.lineDashOffset = -2 * ln.len * p;
+        ctx.stroke(ln.path);
+      }
+    }
+    let last = 0;
+    function loop(now) {
+      requestAnimationFrame(loop);
+      if (document.hidden || now - last < 33) return;   // ~30 fps is plenty for slow drift
+      last = now; draw(now);
+    }
+    addEventListener("resize", resize); resize();
+    if (!still) requestAnimationFrame(loop);
+  })();
+
+  // Log in
+  const csrf = () => (document.cookie.split("; ").find(r => r.startsWith("csrftoken=")) || "").split("=")[1] || "";
+  const form = document.getElementById("loginForm"), err = document.getElementById("err"), go = document.getElementById("go");
+  function fillDemo() { form.phone.value = "9876543210"; form.password.value = "demo1234"; }
+  document.getElementById("demo").addEventListener("click", () => { fillDemo(); go.focus(); });
+  if (new URLSearchParams(location.search).has("demo")) fillDemo();
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault(); err.textContent = "";
+    if (!form.phone.value.trim() || !form.password.value) { err.textContent = "Enter your phone number and password."; return; }
+    go.disabled = true;
+    try {
+      const res = await fetch("/api/login/", { method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        body: JSON.stringify({ phone: form.phone.value.replace(/\D/g, ""), password: form.password.value }) });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { location.href = "/app/"; return; }
+      err.textContent = data.message || "That didn't work. Check your phone number and password.";
+    } catch (x) {
+      err.textContent = "Can't reach EchoMint. Check the internet connection and try again.";
+    }
+    go.disabled = false;
+  });
+</script>
+</body>
+</html>

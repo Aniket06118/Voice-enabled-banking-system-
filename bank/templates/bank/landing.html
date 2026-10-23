@@ -1,0 +1,147 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EchoMint, a hands-free bank</title>
+<meta name="description" content="EchoMint is a hands-free bank for the elderly. Pay, check your balance and hear your history just by talking.">
+<link rel="stylesheet" href="{% static 'bank/fonts/fonts.css' %}">
+<link rel="stylesheet" href="{% static 'bank/site.css' %}">
+<script type="importmap">
+{ "imports": {
+    "three": "{% static 'bank/vendor/three/three.module.min.js' %}",
+    "three/addons/": "{% static 'bank/vendor/three/addons/' %}"
+} }
+</script>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="/">EchoMint</a>
+    <nav aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#safety">Safety</a>
+      <a class="signup" href="/signup/">Sign up</a>
+      <a class="btn btn-ink" href="/login/">Log in</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero" aria-labelledby="title" style="padding:0">
+    <div class="machine" id="machine" role="img"
+         aria-label="A 3D model of one payment moving through EchoMint: you speak, your voice is checked, EchoMint understands, you confirm, and the money moves. Drag to turn it, hover a station to read about it."></div>
+    <div class="wrap">
+      <div class="copy">
+        <h1 class="wordmark" id="title" data-split>EchoMint</h1>
+        <p class="lede">A hands-free bank for the elderly.</p>
+        <p class="sub">Pay someone, check your balance or hear what you spent, just by talking. Your voice is checked every time, and bigger payments still need your PIN.</p>
+        <div class="actions">
+          <a class="btn btn-ink" href="/login/"><span class="dot" aria-hidden="true"></span>Open my bank</a>
+          <a class="btn btn-quiet" href="#how">See how a payment works</a>
+        </div>
+      </div>
+    </div>
+    <p class="now" aria-live="polite"><span class="live" aria-hidden="true"></span><span id="nowText">Step 1 of 5: <b>You speak</b></span></p>
+    <p class="hint">Drag to turn. Hover a station.</p>
+  </section>
+
+  <section id="how" aria-labelledby="howTitle">
+    <div class="wrap">
+      <h2 id="howTitle">One payment, start to finish</h2>
+      <p class="section-sub">This is what happens when you say “Send 300 to Aman”. Pick a step to watch it on the machine above.</p>
+      <ol class="steps" id="steps"></ol>
+    </div>
+  </section>
+
+  <section class="say" aria-labelledby="sayTitle">
+    <div class="wrap">
+      <h2 id="sayTitle">Talk to it like you'd talk to your grandchild</h2>
+      <p class="section-sub">No menus to learn. Say it the way you normally would, in English or Hindi.</p>
+      <div class="bubbles">
+        <span class="bubble">What's my balance?</span>
+        <span class="bubble">Send 300 to Aman</span>
+        <span class="bubble" lang="hi">माँ को 200 रुपये भेजो</span>
+        <span class="bubble">How much did I send Rahul this month?</span>
+        <span class="bubble">Read me my last five payments</span>
+        <span class="bubble">No, cancel that</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="safety" id="safety" aria-labelledby="safeTitle">
+    <div class="wrap">
+      <h2 id="safeTitle">Nothing moves unless you say so</h2>
+      <p class="section-sub">Three locks stand between a stranger and your money. Each one works on its own.</p>
+      <div class="locks">
+        <div class="lock">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 12h2M6 8v8M10 5v14M14 9v6M18 7v10M22 12h-2"/></svg>
+          <h3>A voice that can't be copied</h3>
+          <p>You read a few fresh, random digits each time. An old recording of you won't have them.</p>
+        </div>
+        <div class="lock">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg>
+          <h3>Your PIN for ₹500 and up</h3>
+          <p>Typed on screen, never said out loud, and never seen by the assistant.</p>
+        </div>
+        <div class="lock">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
+          <h3>Never locked out</h3>
+          <p>If the room is noisy or the microphone acts up, your PIN gets you in instead.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="try" aria-labelledby="tryTitle">
+    <div class="wrap">
+      <div>
+        <h2 id="tryTitle">Try it with the demo account</h2>
+        <p class="section-sub" style="margin-bottom:34px">It has ₹10,000 of pretend money and four contacts: Rahul Sharma, Rahul Verma, Mom and Aman.</p>
+        <a class="btn btn-ink" href="/login/?demo=1"><span class="dot" aria-hidden="true"></span>Log in with the demo account</a>
+      </div>
+      <dl class="creds">
+        <dt>Phone</dt><dd>98765 43210</dd>
+        <dt>Password</dt><dd>demo1234</dd>
+        <dt>PIN</dt><dd>1234</dd>
+      </dl>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap"><span>EchoMint is a hackathon prototype, not a real bank.</span><a href="/login/">Log in</a></div>
+</footer>
+
+<script>
+  // Split the wordmark into letters for the one load animation.
+  document.querySelectorAll("[data-split]").forEach(el => {
+    const word = el.textContent; el.setAttribute("aria-label", word); el.textContent = "";
+    [...word].forEach((c, i) => { const s = document.createElement("span"); s.className = "ch"; s.style.setProperty("--i", i); s.textContent = c; s.setAttribute("aria-hidden", "true"); el.appendChild(s); });
+  });
+</script>
+<script type="module">
+  import { initBankMachine, STEPS } from "{% static 'bank/bank-machine.js' %}";
+
+  const list = document.getElementById("steps"), now = document.getElementById("nowText");
+  STEPS.forEach((s, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<button type="button"><span class="num">${i + 1}</span><h3>${s.name}</h3><p>${s.desc}</p></button>`;
+    li.querySelector("button").addEventListener("click", () => {
+      machine.focus(i);
+      document.getElementById("machine").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    li.querySelector("button").addEventListener("mouseenter", () => machine.focus(i));
+    list.appendChild(li);
+  });
+  function show(i) {
+    [...list.children].forEach((li, k) => li.classList.toggle("on", k === i));
+    now.innerHTML = `Step ${i + 1} of 5: <b>${STEPS[i].name}</b>`;
+  }
+  let machine = { focus: show };
+  await document.fonts.ready;
+  machine = initBankMachine(document.getElementById("machine"), { offset: 0.25, onStep: show });
+</script>
+</body>
+</html>

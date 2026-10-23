@@ -9,12 +9,13 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.db import connection
 from django.http import JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from . import agent, services
-from .models import Account
+from . import agent, intents, services, voice
+from .models import Account, VoiceProfile
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,41 @@ def api_login_required(view):
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated or not hasattr(request.user, "account"):
             return _respond(services._result(False, "not_logged_in", "Please log in first."))
+        return view(request, *args, **kwargs)
+    return wrapper
+
+
+def _voice_verified(request) -> bool:
+    """Verified stays valid while the person keeps using the app (idle timeout),
+    up to a hard limit. A page refresh therefore never asks again."""
+    if not settings.VOICE_REQUIRED:
+        return True
+    now = time.time()
+    at = request.session.get("voice_verified_at")
+    if not at or now - at > settings.VOICE_MAX_HOURS * 3600:
+        return False
+    last = request.session.get("voice_last_active", at)
+    if now - last > settings.VOICE_IDLE_MINUTES * 60:
+        return False
+    if now - last > 60:
+        request.session["voice_last_active"] = now
+    return True
+
+
+def _mark_verified(request, method: str):
+    now = time.time()
+    request.session["voice_verified_at"] = now
+    request.session["voice_last_active"] = now
+    request.session["voice_method"] = method          # "voice" or "pin"
+
+
+def voice_required(view):
+    """Block the endpoint until this session has passed the voice check."""
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if not _voice_verified(request):
+            return JsonResponse({"ok": False, "code": "voice_required",
+                                 "message": "Please verify your voice first."}, status=403)
         return view(request, *args, **kwargs)
     return wrapper
 
@@ -108,6 +144,7 @@ def summary(request):
 
 @require_POST
 @api_login_required
+@voice_required
 def start_payment(request):
     d = _body(request)
     return _respond(services.initiate_payment(
@@ -117,6 +154,7 @@ def start_payment(request):
 
 @require_POST
 @api_login_required
+@voice_required
 def confirm_payment(request, payment_id):
     d = _body(request)
     result = services.confirm_payment(request.user.account, payment_id, pin=d.get("pin"))
@@ -129,14 +167,53 @@ def confirm_payment(request, payment_id):
 
 @require_POST
 @api_login_required
+@voice_required
 def cancel_payment(request, payment_id):
     return _respond(services.cancel_payment(request.user.account, payment_id))
+
+
+@require_GET
+@api_login_required
+def notifications(request):
+    return JsonResponse({"ok": True, "notifications": services.notifications(request.user.account)})
+
+
+@require_POST
+@api_login_required
+@voice_required
+def change_pin(request):
+    d = _body(request)
+    return _respond(services.change_pin(request.user.account, d.get("old_pin"), d.get("new_pin")))
+
+
+@require_POST
+@api_login_required
+@voice_required
+def daily_limit(request):
+    d = _body(request)
+    return _respond(services.set_daily_limit(request.user.account, d.get("daily_limit"), d.get("pin")))
 
 
 # ---------------------------------------------------------------- the website
 
 @ensure_csrf_cookie
+def landing(request):
+    """Public home page with the 3D "how a payment works" machine."""
+    return render(request, "bank/landing.html")
+
+
+@ensure_csrf_cookie
+def login_page(request):
+    if request.user.is_authenticated and hasattr(request.user, "account"):
+        return redirect("/app/")
+    return render(request, "bank/login.html")
+
+
+@ensure_csrf_cookie
 def index(request):
+    """The banking app itself (chat, mic, balance, PIN pad). Needs a login."""
+    if not (request.user.is_authenticated and hasattr(request.user, "account")):
+        return redirect("/login/")
     return render(request, "bank/app.html")
 
 
@@ -151,6 +228,7 @@ def _remember(request, role: str, content: str):
 
 @require_POST
 @api_login_required
+@voice_required
 def agent_chat(request):
     """One turn with the banking agent (typed text or the transcript of speech)."""
     body = _body(request)
@@ -170,10 +248,12 @@ def agent_chat(request):
     out = agent.run_chat(account, request.session.get("chat", []), message, lang=lang)
     _remember(request, "user", message)
     _remember(request, "assistant", out["reply"])
-    payload = {"ok": True, "reply": out["reply"],
+    analysis = next(({"id": u["id"], "url": u["url"], "title": u["title"]} for u in ui if u.get("type") == "analysis"), None)
+    payload = {"ok": True, "reply": out["reply"], "ui": ui, "analysis": analysis, "source": source,
+               "ms": round((time.perf_counter() - t0) * 1000),
                "pending_payment": agent.pending_payload(account),
                "balance": str(Account.objects.get(pk=account.pk).balance)}
-    if settings.DEBUG and out["error"]:
+    if settings.DEBUG and out.get("error"):
         payload["debug_error"] = out["error"]
     return JsonResponse(payload)
 

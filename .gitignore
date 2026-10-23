@@ -1,22 +1,7 @@
-# Python-generated files
+﻿env/
+venv/
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-langgraph.json
-.langgraph_api/
-.env
-enroll_sample.wav
-voice_profile.npy
-verify_sample.wav
-pretrained_models/
-
-env/
+*.pyc
 .env
 db.sqlite3
-__pycache__/
+pretrained_models/

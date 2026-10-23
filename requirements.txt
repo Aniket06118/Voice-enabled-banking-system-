@@ -1,0 +1,7 @@
+Django>=5.2,<5.3
+psycopg[binary]>=3.2
+dj-database-url>=2.2
+python-dotenv>=1.0
+langchain>=1.0
+langchain-google-genai>=3.0
+sarvamai>=0.1.37

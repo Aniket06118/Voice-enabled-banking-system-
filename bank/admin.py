@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Account, AuditLog, Contact, Payment
+from .models import Account, AuditLog, Contact, Payment, VoiceProfile
 
 
 class ContactInline(admin.TabularInline):
@@ -32,3 +32,9 @@ class PaymentAdmin(admin.ModelAdmin):
 class AuditLogAdmin(admin.ModelAdmin):
     list_display = ("created_at", "account", "event", "detail")
     list_filter = ("event",)
+
+
+@admin.register(VoiceProfile)
+class VoiceProfileAdmin(admin.ModelAdmin):
+    list_display = ("account", "samples", "failed_attempts", "locked_until", "updated_at")
+    exclude = ("embedding",)

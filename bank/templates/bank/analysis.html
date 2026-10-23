@@ -1,0 +1,219 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spending analysis · EchoMint</title>
+<link rel="stylesheet" href="{% static 'bank/fonts/fonts.css' %}">
+<script src="{% static 'bank/vendor/chartjs/chart.umd.js' %}"></script>
+<style>
+  :root {
+    --bg: #e9ecf1; --surface: #f6f7f9; --surface2: #eef1f5; --line: #d6dbe4; --ink: #17191e; --slate: #586072;
+    --signal: #2f56e8; --good: #18794e; --bad: #b4441c; --grid: rgba(23,25,30,.08);
+    --display: "Bricolage Grotesque", "Atkinson Hyperlegible", system-ui, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11141a; --surface: #1a1e26; --surface2: #222733; --line: #2c3240; --ink: #e8ebf1; --slate: #a1a9ba;
+            --signal: #6f8bff; --good: #4cc38a; --bad: #f08a5d; --grid: rgba(232,235,241,.08); color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.5 "Atkinson Hyperlegible", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+  .wrap { width: min(1240px, 100% - 32px); margin: 0 auto; padding: 26px 0 60px; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 26px; }
+  .back { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; text-decoration: none; padding: 10px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+  .back:hover { border-color: var(--ink); }
+  .back svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .brand { font: 800 1.3rem/1 var(--display); letter-spacing: -.03em; text-decoration: none; }
+  h1 { font: 800 clamp(1.9rem, 3.4vw, 2.8rem)/1.08 var(--display); letter-spacing: -.03em; margin: 0 0 6px; }
+  .sub { color: var(--slate); margin: 0; }
+  .head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 18px; margin-bottom: 24px; }
+  .pickers { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pickers label { display: block; font-size: .8rem; font-weight: 700; color: var(--slate); margin-bottom: 4px; }
+  select { height: 48px; padding: 0 14px; border-radius: 14px; border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; min-width: 170px; }
+  select:focus { outline: none; border-color: var(--signal); }
+  .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; min-height: 112px; }
+  .kpi .l { color: var(--slate); font-size: .85rem; }
+  .kpi .v { font: 800 1.7rem/1.2 var(--display); letter-spacing: -.02em; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .kpi .s { color: var(--slate); font-size: .8rem; }
+  .kpi .v.good { color: var(--good); } .kpi .v.bad { color: var(--bad); }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: dense; gap: 16px; }
+  .chart { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 20px; min-width: 0; animation: rise .5s cubic-bezier(.2,.9,.3,1) both; }
+  .chart.wide { grid-column: 1 / -1; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  .chart h2 { font: 700 1.15rem/1.25 var(--display); margin: 0; }
+  .chart .cs { color: var(--slate); font-size: .88rem; margin: 2px 0 4px; }
+  .chart .why { color: var(--slate); font-size: .8rem; font-style: italic; margin: 0 0 12px; }
+  .canvas-box { position: relative; height: 280px; }
+  .insights { margin-top: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 20px 24px; }
+  .insights h2 { font: 700 1.15rem var(--display); margin: 0 0 8px; }
+  .insights ul { margin: 0; padding-left: 20px; } .insights li { margin: 6px 0; }
+  .heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 4px; overflow-x: auto; padding-bottom: 4px; }
+  .heat i { width: 18px; height: 18px; border-radius: 4px; background: var(--surface2); }
+  .heat-wrap { display: flex; gap: 8px; } .heat-days { display: grid; grid-template-rows: repeat(7, 18px); gap: 4px; font-size: .7rem; color: var(--slate); }
+  .heat-legend { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: .78rem; color: var(--slate); }
+  .heat-legend i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+  .sk { background: linear-gradient(90deg, var(--surface2), var(--surface), var(--surface2)); background-size: 200% 100%; animation: sk 1.2s infinite linear; border-radius: 18px; }
+  @keyframes sk { to { background-position: -200% 0; } }
+  .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 20px; padding: 48px 24px; text-align: center; }
+  .empty h2 { font: 700 1.4rem var(--display); margin: 0 0 6px; } .empty p { color: var(--slate); margin: 0 0 18px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 48px; padding: 0 20px; border-radius: 14px; border: 0; background: var(--signal); color: #fff; font-weight: 700; font-size: 1rem; font-family: inherit; text-decoration: none; cursor: pointer; }
+  @media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid { grid-template-columns: 1fr; } }
+  @media (max-width: 520px) { .kpis { grid-template-columns: 1fr 1fr; } .kpi .v { font-size: 1.35rem; } select { min-width: 0; width: 100%; } .pickers > div { flex: 1 1 140px; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="back" href="/app/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Back to dashboard</a>
+    <a class="brand" href="/">EchoMint</a>
+  </div>
+  <div class="head">
+    <div><h1 id="title">Spending analysis</h1><p class="sub" id="subtitle">&nbsp;</p></div>
+    <div class="pickers">
+      <div><label for="cat">Category</label><select id="cat">
+        <option value="all">All categories</option><option value="food">Food</option><option value="groceries">Groceries</option>
+        <option value="travel">Travel</option><option value="shopping">Shopping</option><option value="bills">Bills</option>
+        <option value="health">Health</option><option value="entertainment">Entertainment</option><option value="transfers">Transfers</option><option value="other">Other</option></select></div>
+      <div><label for="per">Period</label><select id="per">
+        <option value="last_7_days">Last 7 days</option><option value="last_30_days">Last 30 days</option><option value="this_month">This month</option>
+        <option value="last_month">Last month</option><option value="last_3_months">Last 3 months</option><option value="last_6_months">Last 6 months</option>
+        <option value="this_year">This year</option><option value="last_year">Last year</option></select></div>
+    </div>
+  </div>
+  <main id="out" aria-live="polite"></main>
+</div>
+
+{{ params|json_script:"params" }}
+<script>
+const $ = (s) => document.querySelector(s);
+const P = JSON.parse(document.getElementById("params").textContent);
+const SAVED_ID = "{{ analysis_id|default_if_none:'' }}";
+const inr = (n) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let charts = [];
+
+Chart.defaults.font.family = '"Atkinson Hyperlegible", system-ui, sans-serif';
+Chart.defaults.font.size = 13;
+Chart.defaults.plugins.tooltip.padding = 12;
+Chart.defaults.plugins.tooltip.cornerRadius = 10;
+Chart.defaults.plugins.tooltip.callbacks.label = (c) => {
+  const v = c.parsed && typeof c.parsed === "object" ? (c.chart.config.options.indexAxis === "y" ? c.parsed.x : c.parsed.y) : c.parsed;
+  return ` ${c.dataset.label ? c.dataset.label + ": " : (c.label ? c.label + ": " : "")}${inr(v)}`;
+};
+
+function skeleton() {
+  $("#out").innerHTML = `<div class="kpis">${'<div class="kpi sk"></div>'.repeat(5)}</div>
+    <div class="grid"><div class="sk" style="height:360px"></div><div class="sk" style="height:360px"></div></div>`;
+}
+function axes(horizontal = false, stacked = false) {
+  // money axis gets ₹ labels; the category axis keeps Chart.js's own labels
+  const money = { color: css("--slate"), callback: (v) => inr(v) };
+  const names = { color: css("--slate"), maxRotation: 0, autoSkip: true };
+  return {
+    x: { stacked, grid: { color: horizontal ? css("--grid") : "transparent" }, ticks: horizontal ? money : names, beginAtZero: horizontal },
+    y: { stacked, grid: { color: horizontal ? "transparent" : css("--grid") }, ticks: horizontal ? names : money, beginAtZero: !horizontal },
+  };
+}
+
+/* One small renderer per chart type. Adding a type = adding one function. */
+const RENDER = {
+  donut(ctx, d) {
+    return new Chart(ctx, { type: "doughnut", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: d.colors, borderColor: css("--surface"), borderWidth: 3, hoverOffset: 10 }] },
+      options: { cutout: "62%", maintainAspectRatio: false, plugins: { legend: { position: "right", labels: { color: css("--ink"), usePointStyle: true, padding: 14 } } } } });
+  },
+  bar(ctx, d) {
+    return new Chart(ctx, { type: "bar", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: d.color || css("--signal"), borderRadius: 8, maxBarThickness: 46 }] },
+      options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: axes() } });
+  },
+  horizontal_bar(ctx, d) {
+    return new Chart(ctx, { type: "bar", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: d.color || css("--signal"), borderRadius: 8, maxBarThickness: 30 }] },
+      options: { indexAxis: "y", maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: axes(true) } });
+  },
+  line(ctx, d, fill = false) {
+    const color = d.color || css("--signal");
+    return new Chart(ctx, { type: "line", data: { labels: d.labels, datasets: [{ data: d.values, borderColor: color, backgroundColor: color + "33", fill, tension: .35, pointRadius: d.values.length > 40 ? 0 : 3, pointHoverRadius: 6, borderWidth: 3 }] },
+      options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, plugins: { legend: { display: false } }, scales: axes() } });
+  },
+  area(ctx, d) { return RENDER.line(ctx, d, true); },
+  stacked_bar(ctx, d) {
+    return new Chart(ctx, { type: "bar", data: { labels: d.labels, datasets: d.series.map(s => ({ label: s.label, data: s.values, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 46 })) },
+      options: { maintainAspectRatio: false, plugins: { legend: { labels: { color: css("--ink"), usePointStyle: true } } }, scales: axes(false, true) } });
+  },
+  comparison_bar(ctx, d) {
+    if (d.labels.length === 1)   // one category: two labelled bars side by side
+      return new Chart(ctx, { type: "bar", data: { labels: d.series.map(s => s.label), datasets: [{ data: d.series.map(s => s.values[0]), backgroundColor: d.series.map(s => s.color), borderRadius: 8, maxBarThickness: 90 }] },
+        options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: axes() } });
+    return new Chart(ctx, { type: "bar", data: { labels: d.labels, datasets: d.series.map(s => ({ label: s.label, data: s.values, backgroundColor: s.color, borderRadius: 8, maxBarThickness: 40 })) },
+      options: { maintainAspectRatio: false, plugins: { legend: { labels: { color: css("--ink"), usePointStyle: true } } }, scales: axes() } });
+  },
+  calendar_heatmap(box, d) {           // not a Chart.js chart: a small HTML grid
+    const max = Math.max(1, ...d.days.map(x => x.value));
+    const first = new Date(d.days[0].date + "T00:00:00"), pad = (first.getDay() + 6) % 7;
+    const cells = Array(pad).fill('<i style="visibility:hidden"></i>').concat(d.days.map(x => {
+      const a = x.value ? 0.18 + 0.82 * (x.value / max) : 0;
+      const label = `${new Date(x.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })}: ${inr(x.value)}`;
+      return `<i title="${label}" aria-label="${label}" style="${a ? `background:${d.color};opacity:${a.toFixed(2)}` : ""}"></i>`;
+    }));
+    box.innerHTML = `<div class="heat-wrap"><div class="heat-days"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span></div><div class="heat">${cells.join("")}</div></div>
+      <div class="heat-legend">Less ${[0.18, 0.45, 0.72, 1].map(a => `<i style="background:${d.color};opacity:${a}"></i>`).join("")} More</div>`;
+    box.style.height = "auto";
+    return null;
+  },
+};
+
+function render(spec) {
+  charts.forEach(c => c && c.destroy()); charts = [];
+  $("#title").textContent = spec.title; $("#subtitle").textContent = spec.subtitle;
+  document.title = spec.title + " · EchoMint";
+  $("#cat").value = spec.category; if (spec.period.key && [...$("#per").options].some(o => o.value === spec.period.key)) $("#per").value = spec.period.key;
+  if (spec.empty) {
+    $("#out").innerHTML = `<div class="empty"><h2>Nothing to show yet</h2><p>${esc(spec.message)} Try a longer period or another category.</p>
+      <button class="btn" type="button" id="wider">Show the last 6 months</button></div>`;
+    $("#wider").onclick = () => { $("#per").value = "last_6_months"; load(); };
+    return;
+  }
+  const kpis = spec.kpis.map(k => `<div class="kpi"><div class="l">${esc(k.label)}</div><div class="v ${k.id === "change" && k.raw !== null ? (k.good ? "good" : "bad") : ""}">${esc(k.value)}</div>${k.sub ? `<div class="s">${esc(k.sub)}</div>` : ""}</div>`).join("");
+  const cards = spec.charts.map((c, i) => `<section class="chart ${["stacked_bar"].includes(c.type) || (spec.charts.length % 2 && i === spec.charts.length - 1) ? "wide" : ""}" style="animation-delay:${i * 70}ms">
+      <h2>${esc(c.title)}</h2><p class="cs">${esc(c.subtitle || "")}</p><p class="why">${esc(c.why)}</p>
+      <div class="canvas-box" id="box-${i}">${c.type === "calendar_heatmap" ? "" : `<canvas id="c-${i}" role="img" aria-label="${esc(c.title)}"></canvas>`}</div></section>`).join("");
+  $("#out").innerHTML = `<div class="kpis">${kpis}</div><div class="grid">${cards}</div>
+    ${spec.insights.length ? `<section class="insights"><h2>What stands out</h2><ul>${spec.insights.map(t => `<li>${esc(t)}</li>`).join("")}</ul></section>` : ""}`;
+  spec.charts.forEach((c, i) => {
+    const r = RENDER[c.type]; if (!r) return;
+    charts.push(c.type === "calendar_heatmap" ? r($("#box-" + i), c.data) : r($("#c-" + i), c.data));
+  });
+}
+
+async function fetchSpec(url) {
+  const res = await fetch(url, { credentials: "same-origin" });
+  if (res.status === 401) { location.href = "/login/"; return null; }
+  if (!res.ok) throw new Error("bad");
+  return res.json();
+}
+async function load(first = false) {
+  skeleton();
+  try {
+    const spec = first && SAVED_ID ? await fetchSpec(`/api/analysis/${SAVED_ID}/`)
+      : await fetchSpec(`/api/analysis/?category=${$("#cat").value}&period=${$("#per").value}`);
+    if (!spec) return;
+    if (!first || !SAVED_ID) history.replaceState(null, "", `/analysis/?category=${spec.category}&period=${spec.period.key}`);
+    render(spec);
+  } catch (e) {
+    $("#out").innerHTML = `<div class="empty"><h2>Couldn't load the analysis</h2><p>Check the connection and try again.</p><button class="btn" type="button" onclick="load()">Try again</button></div>`;
+  }
+}
+const q = new URLSearchParams(location.search);
+$("#cat").value = q.get("category") || P.category || "all";
+$("#per").value = q.get("period") || P.period || "last_30_days";
+if (!$("#per").value) $("#per").value = "last_30_days";
+$("#cat").onchange = () => load(); $("#per").onchange = () => load();
+load(true);
+</script>
+</body>
+</html>

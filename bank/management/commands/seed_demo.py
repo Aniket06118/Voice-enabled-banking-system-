@@ -11,16 +11,34 @@ from django.utils import timezone
 from bank.categories import categorize
 from bank.models import Account, Contact, Payment
 
-DEMO_PHONE = "9876543210"
-DEMO_PASSWORD = "demo1234"
 DEMO_PIN = "1234"
 
 
 class Command(BaseCommand):
-    help = "Create the demo customer (Aniket) with contacts and a starting balance. Safe to re-run."
+    help = ("Create the demo customer (Aniket) with contacts and 6 months of payments. Safe to re-run. "
+            "Use --phone 98XXXXXXXX to move the demo account to another mobile number.")
+
+    def add_arguments(self, parser):
+        parser.add_argument("--phone", help="Move the demo account to this 10-digit mobile number")
 
     def handle(self, *args, **options):
+        from django.conf import settings
+        from bank.services import normalize_phone
+        DEMO_PHONE, DEMO_PASSWORD = settings.DEMO_PHONE, settings.DEMO_PASSWORD
         User = get_user_model()
+        new_phone = normalize_phone(options.get("phone")) if options.get("phone") else None
+        if new_phone:
+            existing = Account.objects.filter(phone=DEMO_PHONE).first() or Account.objects.filter(account_number="123456789").first()
+            if Account.objects.filter(phone=new_phone).exclude(pk=getattr(existing, "pk", None)).exists():
+                self.stderr.write(f"Another account already uses {new_phone}.")
+                return
+            if existing:
+                existing.phone = new_phone
+                existing.save(update_fields=["phone"])
+                existing.user.username = new_phone
+                existing.user.save(update_fields=["username"])
+                self.stdout.write(self.style.SUCCESS(f"Demo account moved to {new_phone}. Put DEMO_PHONE={new_phone} in .env."))
+            DEMO_PHONE = new_phone
         user, created = User.objects.get_or_create(username=DEMO_PHONE)
         if created:
             user.set_password(DEMO_PASSWORD)

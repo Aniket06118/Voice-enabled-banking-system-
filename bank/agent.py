@@ -208,8 +208,8 @@ def build_tools(account, ui: list = None):
 
 def model_names() -> list:
     """Main model first, then a lighter backup that is tried if the first one fails."""
-    primary = os.getenv("AGENT_MODEL", "gemini-2.5-flash")
-    backup = os.getenv("AGENT_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    primary = os.getenv("AGENT_MODEL", "gemini-3.1-flash-lite")
+    backup = os.getenv("AGENT_FALLBACK_MODEL", "gemini-3.5-flash-lite")
     return [primary] if backup == primary else [primary, backup]
 
 

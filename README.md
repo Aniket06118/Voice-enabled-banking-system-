@@ -88,3 +88,31 @@ Payments get a category automatically (bank/categories.py, rule-based). bank/ana
 from database aggregates only and picks charts by the data (donut, stacked bar, trend line/area, top payees,
 weekday pattern, calendar heatmap, comparison with the previous period). `python manage.py backfill_categories`
 re-categorises old payments. `seed_demo` adds ~90 realistic payments over 6 months (once).
+
+## Forgot password
+
+The log-in page has a **Forgot password?** link. The customer enters their registered
+mobile number, their 4-digit PIN (the one used for payments of ₹500+) and a new password.
+Wrong PINs count towards the normal PIN lockout (3 tries, then 15 minutes), and a wrong
+number gets the same answer as a wrong PIN, so the page can't be used to guess PINs or
+find out who has an account. Changing the password signs out every other session.
+
+## Voice check (hands-free)
+
+The voice box opens, the microphone stays on, and a random number appears with a
+15-second timer. Read it out: the clip is sent the moment you stop talking. No speech in
+15 s, or a wrong try, gives a new number, so someone imitating the voice only ever has
+15 seconds per number. The digits are checked by Sarvam and Gemini at the same time
+(first correct answer wins), number words like "char saat" or "double five" count, and a
+voice just under the line with the right digits is combined with the next try instead of
+being rejected. Background noise never counts towards the 5-try lockout.
+
+## Live voice demo: checklist
+
+1. `python manage.py voice_report --reset <phone>` for every account, then each person records
+   their voice on **their own account only**, in the demo room, on the demo microphone.
+2. `python manage.py voice_report` must show the two voices as "ok, clearly different" (under 0.35).
+3. `.env`: `VOICE_SHOW_SCORES=1`, `SARVAM_API_KEY` set. Restart the server (the voice model loads at start).
+4. On stage: owner reads the number -> verified. Click **Lock** (bottom-left). Friend reads the number ->
+   "Access denied" and listening pauses. Owner taps **Try again** -> verified.
+5. Locked out after 5 failed checks? `python manage.py voice_report --unlock <phone>`.

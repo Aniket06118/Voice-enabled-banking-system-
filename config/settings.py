@@ -144,13 +144,33 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 VOICE_REQUIRED = os.getenv("VOICE_VERIFICATION_REQUIRED", "1") == "1"
 # The match cut-off is fitted per person at enrollment (see voice.personal_threshold).
 # This is only the strictest value it may reach.
-VOICE_THRESHOLD_CAP = float(os.getenv("VOICE_THRESHOLD_CAP", "0.42"))
+VOICE_THRESHOLD_CAP = float(os.getenv("VOICE_THRESHOLD_CAP", "0.45"))
 # Verified stays valid while the user is active (idle timeout) up to a hard limit.
 VOICE_IDLE_MINUTES = int(os.getenv("VOICE_IDLE_MINUTES", "30"))
 VOICE_MAX_HOURS = int(os.getenv("VOICE_MAX_HOURS", "12"))
 VOICE_MODEL_DIR = BASE_DIR / "pretrained_models" / "spkrec-ecapa-voxceleb"
 
 
+# Demo mode: show the voice match score, the line it needed and the nearest other voice
+# on the voice-check screen (great for judges; leave off in real use).
+VOICE_SHOW_SCORES = os.getenv("VOICE_SHOW_SCORES", "0") == "1"
+# If BOTH speech services are unreachable (venue Wi-Fi), still let in a CLEARLY matching voice.
+VOICE_ALLOW_NO_STT = os.getenv("VOICE_ALLOW_NO_STT", "1") == "1"
+
+# Which speech-to-text services check the spoken digits. They run in parallel and
+# the first that hears the right digits wins. Sarvam is only used if SARVAM_API_KEY is set.
+VOICE_STT_ENGINES = [e.strip() for e in os.getenv("VOICE_STT_ENGINES", "sarvam,gemini").split(",") if e.strip()]
+
+
+# Price the bank sells digital gold at, per gram (24K, about 13 Oct 2026). Update in .env.
+GOLD_PRICE_PER_GRAM = os.getenv("GOLD_PRICE_PER_GRAM", "14929")
+
+# Demo account shown on the login page ("Use the demo account").
+DEMO_PHONE = os.getenv("DEMO_PHONE", "9876543210")
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo1234")
+
+
 # Faster password hashing ONLY while running the test-suite (never in real use).
 if "test" in sys.argv:
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+    VOICE_STT_ENGINES = ["gemini"]      # tests replace this engine; never call real services

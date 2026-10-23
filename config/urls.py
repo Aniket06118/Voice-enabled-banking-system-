@@ -21,7 +21,9 @@ from django.urls import include, path
 from bank import views as bank_views
 
 urlpatterns = [
-    path("", bank_views.index),
+    path("", bank_views.landing),
+    path("login/", bank_views.login_page),
+    path("app/", bank_views.index),
     path("admin/", admin.site.urls),
     path("api/", include("bank.urls")),
 ]

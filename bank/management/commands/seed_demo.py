@@ -32,13 +32,27 @@ class Command(BaseCommand):
             account.set_pin(DEMO_PIN)
             account.save()
 
-        for name, upi in [
-            ("Rahul Sharma", "rahul.sharma@upi"),
-            ("Rahul Verma", "rahul.verma@upi"),
-            ("Mom", "mom@upi"),
-            ("Aman", "aman@upi"),
+        for name, upi, kind in [
+            ("Rahul Sharma", "rahul.sharma@upi", "person"),
+            ("Rahul Verma", "rahul.verma@upi", "person"),
+            ("Mom", "mom@upi", "person"),
+            ("Aman", "aman@upi", "person"),
+            # bills, recharges and gold are paid like any payee, so the voice agent can
+            # handle "pay my electricity bill" with the same safety rules
+            ("Adani Electricity", "adanielectricity@billpay", "biller"),
+            ("Delhi Jal Board", "djb@billpay", "biller"),
+            ("Indraprastha Gas", "igl@billpay", "biller"),
+            ("Airtel Broadband", "airtelbroadband@billpay", "biller"),
+            ("Jio Prepaid", "jio@recharge", "recharge"),
+            ("Airtel Prepaid", "airtel@recharge", "recharge"),
+            ("Vi Prepaid", "vi@recharge", "recharge"),
+            ("EchoMint Gold", "gold@echomint", "gold"),
         ]:
-            Contact.objects.get_or_create(account=account, name=name, defaults={"upi_id": upi})
+            c, _ = Contact.objects.get_or_create(account=account, name=name,
+                                                 defaults={"upi_id": upi, "kind": kind})
+            if c.kind != kind:
+                c.kind = kind
+                c.save(update_fields=["kind"])
 
         self.stdout.write(self.style.SUCCESS(
             "Demo user ready ->  phone: %s   password: %s   PIN: %s   balance: Rs 10,000"

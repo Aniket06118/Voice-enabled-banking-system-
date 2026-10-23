@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 
 import dj_database_url
@@ -88,6 +89,11 @@ DATABASES = {
         conn_max_age=60,
     )
 }
+if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
+    # On the SQLite fallback, take the write lock up front and wait for it (instead of
+    # failing with "database is locked" when two requests overlap).
+    DATABASES["default"].setdefault("OPTIONS", {}).update(
+        {"transaction_mode": "IMMEDIATE", "timeout": 20})
 
 
 # Password validation
@@ -130,3 +136,21 @@ STATIC_URL = "static/"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+# ---- Voice security -------------------------------------------------------
+# Set VOICE_VERIFICATION_REQUIRED=0 in .env to switch voice checks off (emergency
+# fallback if the voice model isn't installed or the room is too noisy to demo).
+VOICE_REQUIRED = os.getenv("VOICE_VERIFICATION_REQUIRED", "1") == "1"
+# The match cut-off is fitted per person at enrollment (see voice.personal_threshold).
+# This is only the strictest value it may reach.
+VOICE_THRESHOLD_CAP = float(os.getenv("VOICE_THRESHOLD_CAP", "0.42"))
+# Verified stays valid while the user is active (idle timeout) up to a hard limit.
+VOICE_IDLE_MINUTES = int(os.getenv("VOICE_IDLE_MINUTES", "30"))
+VOICE_MAX_HOURS = int(os.getenv("VOICE_MAX_HOURS", "12"))
+VOICE_MODEL_DIR = BASE_DIR / "pretrained_models" / "spkrec-ecapa-voxceleb"
+
+
+# Faster password hashing ONLY while running the test-suite (never in real use).
+if "test" in sys.argv:
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]

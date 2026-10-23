@@ -56,8 +56,15 @@ class Contact(models.Model):
     account = models.ForeignKey(
         Account, on_delete=models.CASCADE, related_name="contacts"
     )
+    class Kind(models.TextChoices):
+        PERSON = "person", "Person"
+        BILLER = "biller", "Bill"
+        RECHARGE = "recharge", "Mobile recharge"
+        GOLD = "gold", "Digital gold"
+
     name = models.CharField(max_length=120)
     upi_id = models.CharField(max_length=120)
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.PERSON)
 
     class Meta:
         ordering = ["name"]
@@ -119,6 +126,25 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.recipient_name} {self.amount} [{self.status}]"
+
+
+class VoiceProfile(models.Model):
+    """The owner's voiceprint (a list of numbers, never the raw audio)."""
+
+    account = models.OneToOneField(
+        Account, on_delete=models.CASCADE, related_name="voice_profile"
+    )
+    embedding = models.JSONField()
+    samples = models.PositiveSmallIntegerField(default=0)
+    # Match cut-off fitted to this person at enrollment (0.32 - 0.42).
+    threshold = models.FloatField(default=0.40)
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Voiceprint of {self.account.full_name}"
 
 
 class AuditLog(models.Model):

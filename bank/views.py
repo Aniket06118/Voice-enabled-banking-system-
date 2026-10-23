@@ -1,5 +1,8 @@
 """JSON API used by the website (and anything else that wants to talk to the bank)."""
+import base64
 import json
+import logging
+import os
 from functools import wraps
 
 from django.conf import settings
@@ -12,6 +15,8 @@ from django.views.decorators.http import require_GET, require_POST
 
 from . import agent, services
 from .models import Account
+
+log = logging.getLogger(__name__)
 
 ERROR_STATUS = {
     "payment_not_found": 404,
@@ -148,12 +153,21 @@ def _remember(request, role: str, content: str):
 @api_login_required
 def agent_chat(request):
     """One turn with the banking agent (typed text or the transcript of speech)."""
-    message = str(_body(request).get("message", "")).strip()[:500]
+    body = _body(request)
+    message = str(body.get("message", "")).strip()[:500]
+    lang = str(body.get("lang", "en-IN")).strip() or "en-IN"
     if not message:
         return JsonResponse({"ok": False, "code": "empty",
                              "message": "I didn't catch that."}, status=400)
     account = request.user.account
-    out = agent.run_chat(account, request.session.get("chat", []), message)
+
+    # If the user changed language, clear older turns in the other language
+    last_lang = request.session.get("chat_lang")
+    if last_lang and last_lang != lang:
+        request.session["chat"] = []
+    request.session["chat_lang"] = lang
+
+    out = agent.run_chat(account, request.session.get("chat", []), message, lang=lang)
     _remember(request, "user", message)
     _remember(request, "assistant", out["reply"])
     payload = {"ok": True, "reply": out["reply"],
@@ -169,3 +183,108 @@ def agent_chat(request):
 def agent_reset(request):
     request.session["chat"] = []
     return JsonResponse({"ok": True})
+
+
+# ---------------------------------------------------------------- Sarvam voice
+
+def _sarvam_client():
+    """Return a SarvamAI client using the key from the environment."""
+    from sarvamai import SarvamAI
+    key = os.environ.get("SARVAM_API_KEY", "")
+    if not key:
+        raise RuntimeError("SARVAM_API_KEY environment variable is not set.")
+    return SarvamAI(api_subscription_key=key)
+
+
+@require_POST
+@api_login_required
+def voice_stt(request):
+    """
+    POST multipart/form-data with:
+        audio   – the recorded audio file (any format Sarvam accepts: webm, wav, mp3…)
+        lang    – BCP-47 code e.g. hi-IN  (optional; Sarvam auto-detects if omitted)
+
+    Returns: {"ok": true, "transcript": "...", "language_code": "hi-IN"}
+
+    Safety: the raw audio bytes are forwarded directly to Sarvam and discarded.
+    They are NEVER written to disk or logged.
+    """
+    audio_file = request.FILES.get("audio")
+    if audio_file is None:
+        return JsonResponse({"ok": False, "code": "no_audio",
+                             "message": "No audio file received."}, status=400)
+
+    lang = request.POST.get("lang", "").strip() or None
+    try:
+        client = _sarvam_client()
+        transcribe_args = {
+            "file": (audio_file.name or "audio.webm", audio_file, audio_file.content_type),
+            "model": "saaras:v4",
+            "mode": "transcribe",
+        }
+        if lang:
+            transcribe_args["language_code"] = lang
+        response = client.speech_to_text.transcribe(**transcribe_args)
+        return JsonResponse({
+            "ok": True,
+            "transcript": response.transcript or "",
+            "language_code": response.language_code or lang or "en-IN",
+        })
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Sarvam STT failed")
+        return JsonResponse({"ok": False, "code": "stt_error",
+                             "message": str(exc)}, status=502)
+
+
+@require_POST
+@api_login_required
+def voice_tts(request):
+    """
+    POST JSON: {"text": "...", "language_code": "hi-IN"}
+
+    Returns: {"ok": true, "audio_b64": "<base64 WAV>"}
+
+    Safety: the text sent here is the AGENT'S reply, not the user's speech.
+    The PIN pad bypass in the UI ensures PIN digits are never in this text.
+    Audio bytes are returned directly and never stored.
+    """
+    data = _body(request)
+    text = str(data.get("text", "")).strip()[:1000]
+    lang = str(data.get("language_code", "en-IN")).strip() or "en-IN"
+
+    if not text:
+        return JsonResponse({"ok": False, "code": "no_text",
+                             "message": "No text to speak."}, status=400)
+
+    # Map language code to a reasonable default Bulbul v4-flash speaker.
+    # If the language is not in the map we fall back to the default persona.
+    _SPEAKER_MAP = {
+        "hi-IN": "shubh_enhi_ads",
+        "en-IN": "shubh_enhi_ads",
+        "ta-IN": "shubh_enhi_ads",
+        "te-IN": "shubh_enhi_ads",
+        "bn-IN": "shubh_enhi_ads",
+        "mr-IN": "shubh_enhi_ads",
+        "gu-IN": "shubh_enhi_ads",
+        "kn-IN": "shubh_enhi_ads",
+        "ml-IN": "shubh_enhi_ads",
+        "pa-IN": "shubh_enhi_ads",
+        "od-IN": "shubh_enhi_ads",
+    }
+    speaker = _SPEAKER_MAP.get(lang, "shubh_enhi_ads")
+
+    try:
+        client = _sarvam_client()
+        response = client.text_to_speech.convert(
+            text=text,
+            model="bulbul:v4-flash",
+            language_code=lang,
+            speaker=speaker,
+            speech_sample_rate=22050,
+        )
+        audio_b64 = "".join(response.audios)
+        return JsonResponse({"ok": True, "audio_b64": audio_b64})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Sarvam TTS failed")
+        return JsonResponse({"ok": False, "code": "tts_error",
+                             "message": str(exc)}, status=502)

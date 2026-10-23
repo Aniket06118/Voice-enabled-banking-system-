@@ -15,4 +15,7 @@ urlpatterns = [
     path("payments/<uuid:payment_id>/cancel/", views.cancel_payment),
     path("agent/chat/", views.agent_chat),
     path("agent/reset/", views.agent_reset),
+    # Sarvam AI voice endpoints
+    path("voice/stt/", views.voice_stt),
+    path("voice/tts/", views.voice_tts),
 ]

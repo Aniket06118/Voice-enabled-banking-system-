@@ -140,8 +140,17 @@
           <div>
             <label for="lang">Language</label>
             <select id="lang">
-              <option value="en-IN">English</option>
-              <option value="hi-IN">हिन्दी</option>
+              <option value="en-IN">English (India)</option>
+              <option value="hi-IN">Hindi</option>
+              <option value="ta-IN">Tamil</option>
+              <option value="te-IN">Telugu</option>
+              <option value="bn-IN">Bengali</option>
+              <option value="mr-IN">Marathi</option>
+              <option value="gu-IN">Gujarati</option>
+              <option value="kn-IN">Kannada</option>
+              <option value="ml-IN">Malayalam</option>
+              <option value="pa-IN">Punjabi</option>
+              <option value="od-IN">Odia</option>
             </select>
           </div>
           <div>
@@ -230,7 +239,10 @@ async function send(text) {
   text = (text || "").trim(); if (!text || busy) return;
   busy = true; stopSpeaking(); addMsg("me", text);
   const t = typing();
-  const { status, data } = await api("/api/agent/chat/", "POST", { message: text });
+  const { status, data } = await api("/api/agent/chat/", "POST", {
+    message: text,
+    lang: $("#lang").value,
+  });
   t.remove(); busy = false;
   if (status === 401) { boot(); return; }
   const reply = data.reply || data.message || "Sorry, something went wrong.";
@@ -250,6 +262,11 @@ async function send(text) {
   }
 }
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#text").value; $("#text").value = ""; send(v); });
+$("#lang").addEventListener("change", async () => {
+  stopSpeaking();
+  await api("/api/agent/reset/", "POST");
+  addMsg("sys", "Language switched to " + $("#lang").selectedOptions[0].text);
+});
 
 async function loadHistory() {
   const { status, data } = await api("/api/history/?limit=6");
@@ -270,21 +287,146 @@ async function loadHistory() {
   }
 }
 
-/* ---------------- speech: listening ---------------- */
+/* ---------------- speech: listening (Sarvam STT with browser fallback) ---- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, listening = false, finalText = "";
+let mediaRec = null, listening = false, finalText = "";
+let _vadHandler = null;
 
-function setListening(on) { listening = on; $("#mic").classList.toggle("live", on); if (!on) $("#heard").textContent = ""; }
+function setListening(on) {
+  listening = on;
+  $("#mic").classList.toggle("live", on);
+  if (!on) $("#heard").textContent = "";
+}
+
+// ── Voice Activity Detection (auto-stop when silence detected) ───────────
+function attachVAD(stream, onDone) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    let speechDetected = false;
+    let silenceStart = null;
+    const SILENCE_MS = 1400; // 1.4 seconds of silence triggers auto-stop
+    const THRESHOLD = 16;    // Volume threshold
+
+    const interval = setInterval(() => {
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i];
+      const avg = sum / data.length;
+
+      if (avg > THRESHOLD) {
+        speechDetected = true;
+        silenceStart = null;
+        $("#heard").textContent = "Listening…";
+      } else if (speechDetected) {
+        const now = Date.now();
+        if (!silenceStart) {
+          silenceStart = now;
+        } else if (now - silenceStart >= SILENCE_MS) {
+          clearInterval(interval);
+          try { ctx.close(); } catch (_) {}
+          onDone();
+        }
+      }
+    }, 60);
+
+    return {
+      stop: () => {
+        clearInterval(interval);
+        try { ctx.close(); } catch (_) {}
+      }
+    };
+  } catch (e) {
+    return { stop: () => {} };
+  }
+}
+
+// ── Sarvam STT via MediaRecorder ──────────────────────────────────────────
+async function sarvamSTT(blob) {
+  const formData = new FormData();
+  formData.append("audio", blob, "audio.webm");
+  formData.append("lang", $("#lang").value);
+  const res = await fetch("/api/voice/stt/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "X-CSRFToken": csrf() },
+    body: formData,
+  });
+  const data = await res.json();
+  if (data.ok && data.transcript) return data.transcript;
+  return null;
+}
 
 function startListening() {
-  if (!SR) { addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
   if (listening || busy || !$("#pinOverlay").classList.contains("hidden")) return;
   stopSpeaking();
+
+  // --- Try Sarvam STT via MediaRecorder first ---
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      const chunks = [];
+      mediaRec = new MediaRecorder(stream);
+      mediaRec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      mediaRec.onstart = () => {
+        setListening(true);
+        $("#heard").textContent = "Listening…";
+        // Start voice activity detection for automatic silence detection
+        _vadHandler = attachVAD(stream, () => {
+          if (mediaRec && mediaRec.state === "recording") {
+            mediaRec.stop();
+          }
+        });
+        // Hard safety timeout: 25s
+        clearTimeout(window._recAutoStopTimer);
+        window._recAutoStopTimer = setTimeout(() => {
+          if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
+        }, 25000);
+      };
+      mediaRec.onstop = async () => {
+        clearTimeout(window._recAutoStopTimer);
+        if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
+        setListening(false);
+        stream.getTracks().forEach(t => t.stop());
+        $("#heard").textContent = "Processing…";
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const transcript = await sarvamSTT(blob);
+        $("#heard").textContent = "";
+        if (transcript) {
+          send(transcript);
+        } else {
+          addMsg("sys", "Could not understand audio. Please try again or type.");
+        }
+      };
+      mediaRec.onerror = () => {
+        if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
+        setListening(false);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mediaRec.start();
+    }).catch((err) => {
+      // Microphone not allowed / unavailable – fall back to browser SR
+      fallbackSTT();
+    });
+    return;
+  }
+  // --- Browser SR fallback ---
+  fallbackSTT();
+}
+
+function fallbackSTT() {
+  if (!SR) { addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
   finalText = "";
-  rec = new SR(); rec.lang = $("#lang").value; rec.interimResults = true; rec.continuous = false;
+  const rec = new SR();
+  rec.lang = $("#lang").value; rec.interimResults = true; rec.continuous = false;
   rec.onresult = (e) => {
     let t = ""; for (const r of e.results) t += r[0].transcript;
-    $("#heard").textContent = "“" + t + "”";
+    $("#heard").textContent = "\u201c" + t + "\u201d";
     if (e.results[e.results.length - 1].isFinal) finalText = t;
   };
   rec.onerror = (e) => {
@@ -295,19 +437,82 @@ function startListening() {
   rec.onend = () => { setListening(false); if (finalText) send(finalText); };
   try { rec.start(); setListening(true); } catch (e) { setListening(false); }
 }
-$("#mic").addEventListener("click", () => { if (listening) rec.stop(); else startListening(); });
 
-/* ---------------- speech: speaking ---------------- */
-function speak(text, onend) {
-  const done = () => { if (onend) onend(); };
-  if ($("#speakOn").value !== "1" || !("speechSynthesis" in window)) { done(); return; }
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.replace(/₹\s?/g, "rupees "));
-  u.lang = $("#lang").value; u.rate = 1.0;
-  u.onend = done; u.onerror = done;
-  speechSynthesis.speak(u);
+$("#mic").addEventListener("click", () => {
+  if (listening) {
+    if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
+    // stop whichever recorder is active
+    if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
+    else setListening(false);
+  } else {
+    startListening();
+  }
+});
+
+/* ---------------- speech: speaking (Sarvam TTS with browser fallback) ----- */
+let _audioCtx = null;
+let _sarvamSource = null;   // current AudioBufferSourceNode, to allow cancellation
+
+function getAudioCtx() {
+  if (!_audioCtx || _audioCtx.state === "closed") {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return _audioCtx;
 }
-function stopSpeaking() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+
+async function sarvamTTS(text, lang, onend) {
+  // Never send a PIN or empty string to TTS
+  if (!text || text.length > 1000) { if (onend) onend(); return false; }
+  try {
+    const res = await fetch("/api/voice/tts/", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+      body: JSON.stringify({ text, language_code: lang }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.audio_b64) return false;
+
+    // Decode base64 WAV and play via Web Audio API
+    const raw = atob(data.audio_b64);
+    const buf = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+
+    const ctx = getAudioCtx();
+    const audioBuf = await ctx.decodeAudioData(buf.buffer);
+    if (_sarvamSource) { try { _sarvamSource.stop(); } catch(e) {} }
+    _sarvamSource = ctx.createBufferSource();
+    _sarvamSource.buffer = audioBuf;
+    _sarvamSource.connect(ctx.destination);
+    _sarvamSource.onended = () => { _sarvamSource = null; if (onend) onend(); };
+    _sarvamSource.start(0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function speak(text, onend) {
+  if ($("#speakOn").value !== "1") { if (onend) onend(); return; }
+  const lang = $("#lang").value;
+  // Try Sarvam TTS first
+  const ok = await sarvamTTS(text, lang, onend);
+  if (!ok) {
+    // Browser speechSynthesis fallback
+    if (!("speechSynthesis" in window)) { if (onend) onend(); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.replace(/\u20b9\s?/g, "rupees "));
+    u.lang = lang; u.rate = 1.0;
+    u.onend = () => { if (onend) onend(); };
+    u.onerror = () => { if (onend) onend(); };
+    speechSynthesis.speak(u);
+  }
+}
+
+function stopSpeaking() {
+  if (_sarvamSource) { try { _sarvamSource.stop(); } catch(e) {} _sarvamSource = null; }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+}
 
 /* ---------------- PIN pad ---------------- */
 let pin = "", pending = null, pinBusy = false;

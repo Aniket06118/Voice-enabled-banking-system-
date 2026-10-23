@@ -7,6 +7,8 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
 from django.db.models import Q
 
+from .categories import CATEGORIES
+
 
 class Account(models.Model):
     """A bank customer. Login is the Django User (username = phone number)."""
@@ -61,6 +63,7 @@ class Contact(models.Model):
         BILLER = "biller", "Bill"
         RECHARGE = "recharge", "Mobile recharge"
         GOLD = "gold", "Digital gold"
+        MERCHANT = "merchant", "Shop or service"
 
     name = models.CharField(max_length=120)
     upi_id = models.CharField(max_length=120)
@@ -106,6 +109,8 @@ class Payment(models.Model):
     auth_used = models.CharField(max_length=15, choices=Auth.choices, blank=True)
     # Same key sent twice => same payment, never charged twice.
     idempotency_key = models.CharField(max_length=64, null=True, blank=True)
+    category = models.CharField(max_length=20, choices=[(c, c.title()) for c in CATEGORIES],
+                                default="other", db_index=True)
     failure_reason = models.CharField(max_length=200, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -126,6 +131,21 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.recipient_name} {self.amount} [{self.status}]"
+
+
+class Analysis(models.Model):
+    """A spending analysis the user asked for. Only the parameters are stored;
+    the numbers are recomputed from the database every time it is opened."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="analyses")
+    params = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Own table name: a shared database may already contain a different
+        # "bank_analysis" table (e.g. from another branch of the project).
+        db_table = "bank_saved_analysis"
 
 
 class VoiceProfile(models.Model):

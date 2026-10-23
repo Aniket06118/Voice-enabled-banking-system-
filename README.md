@@ -38,6 +38,8 @@ Run the tests any time: `python manage.py test bank`
 | GET | /api/summary/?recipient=&days= | exact totals computed by the DB |
 
 ## Web app
+- http://127.0.0.1:8000/signup/  open a new account (gets ₹10,000 demo money and the usual billers)
+- http://127.0.0.1:8000/analysis/  spending analytics (also opens from the assistant: "analyse my food spending last month")
 - http://127.0.0.1:8000/        home page with the 3D "how a payment works" machine
 - http://127.0.0.1:8000/login/  log in (animated line background); demo: 9876543210 / demo1234
 - http://127.0.0.1:8000/app/    the bank itself: tap the mic (Chrome/Edge) or type
@@ -68,3 +70,21 @@ Needs: `pip install torch torchaudio speechbrain` (first run downloads the ~90 M
 Emergency off-switch: `VOICE_VERIFICATION_REQUIRED=0` in `.env`.
 Honest limit: this stops replayed recordings and other people's voices; a high-quality *real-time* AI voice clone
 could still fool voice alone, which is why money still needs the PIN from Rs 500 and why a PIN backup exists.
+
+## Voice assistant: fast, multilingual, controls the whole site
+- **Instant answers (no AI call, ~0.05 s):** yes/no to a waiting payment, balance, "send 300 to Aman",
+  "pay my electricity bill 1200", "open settings", "show my last payments", "analyse my food spending last month",
+  in English and Hindi (bank/intents.py). Everything else goes to Gemini (bank/agent.py) with live account facts
+  in the prompt and "thinking" off, so most answers need a single model call.
+- **11 languages (Aniket's Sarvam work):** English uses the browser's streaming recogniser (fastest); Indian languages
+  use Sarvam saaras:v4 (speech-to-text, with your contact names as hints) and bulbul:v4-flash (voice, MP3).
+  Settings → Speech engine lets you force Sarvam or the browser. No SARVAM_API_KEY = browser speech only.
+- **Voice navigation:** the assistant can open any page or form, change language, text size, spoken replies, freeze
+  the card, download the statement and log out. "Hands-free" keeps listening after each reply.
+- **Robot:** the robot above the chat shows what the assistant is doing (listening, thinking, speaking, happy).
+
+## Analytics (Aniket's spec)
+Payments get a category automatically (bank/categories.py, rule-based). bank/analysis.py builds a dashboard spec
+from database aggregates only and picks charts by the data (donut, stacked bar, trend line/area, top payees,
+weekday pattern, calendar heatmap, comparison with the previous period). `python manage.py backfill_categories`
+re-categorises old payments. `seed_demo` adds ~90 realistic payments over 6 months (once).

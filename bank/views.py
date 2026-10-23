@@ -15,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
-from . import agent, services, voice
+from . import agent, intents, services, voice
 from .models import Account, VoiceProfile
 
 ERROR_STATUS = {
@@ -229,19 +229,42 @@ def _remember(request, role: str, content: str):
 @api_login_required
 @voice_required
 def agent_chat(request):
-    """One turn with the banking agent (typed text or the transcript of speech)."""
-    message = str(_body(request).get("message", "")).strip()[:500]
+    """One turn with the banking agent (typed text or the transcript of speech).
+    Common requests are answered instantly (bank/intents.py); everything else
+    goes to the AI agent. Both paths use the same services.py money rules."""
+    t0 = time.perf_counter()
+    body = _body(request)
+    message = str(body.get("message", "")).strip()[:500]
+    lang = str(body.get("lang", "en-IN")).strip() or "en-IN"
+    if lang not in agent.LANG_MAP:
+        lang = "en-IN"
     if not message:
         return JsonResponse({"ok": False, "code": "empty",
                              "message": "I didn't catch that."}, status=400)
     account = request.user.account
-    out = agent.run_chat(account, request.session.get("chat", []), message)
+
+    # A new language starts a fresh conversation (older turns would pull the model back).
+    if request.session.get("chat_lang") not in (None, lang):
+        request.session["chat"] = []
+    request.session["chat_lang"] = lang
+
+    out = intents.handle(account, message, lang, request.session)
+    source = "instant"
+    if out is None:
+        out = agent.run_chat(account, request.session.get("chat", []), message, lang=lang)
+        source = "ai"
+    ui = out.get("ui") or []
+    for item in ui:
+        if item.get("type") == "analysis":
+            request.session["last_analysis"] = item["url"]
     _remember(request, "user", message)
     _remember(request, "assistant", out["reply"])
-    payload = {"ok": True, "reply": out["reply"],
+    analysis = next(({"id": u["id"], "url": u["url"], "title": u["title"]} for u in ui if u.get("type") == "analysis"), None)
+    payload = {"ok": True, "reply": out["reply"], "ui": ui, "analysis": analysis, "source": source,
+               "ms": round((time.perf_counter() - t0) * 1000),
                "pending_payment": agent.pending_payload(account),
                "balance": str(Account.objects.get(pk=account.pk).balance)}
-    if settings.DEBUG and out["error"]:
+    if settings.DEBUG and out.get("error"):
         payload["debug_error"] = out["error"]
     return JsonResponse(payload)
 
@@ -305,6 +328,7 @@ def voice_status(request):
         "verified": _voice_verified(request),
         "enrolled": VoiceProfile.objects.filter(account=account).exists(),
         "engine_available": voice.engine_available(),
+        "sarvam": bool(__import__("os").getenv("SARVAM_API_KEY")),
     })
 
 
@@ -449,3 +473,157 @@ def voice_fallback(request):
     _mark_verified(request, "pin")
     services._audit(account, "voice_fallback_pin")
     return JsonResponse({"ok": True, "code": "verified", "message": "PIN accepted. You're in."})
+
+
+# ------------------------------------------------- Sarvam speech (from Aniket)
+
+import base64 as _b64  # noqa: E402
+import logging as _logging  # noqa: E402
+import os as _os  # noqa: E402
+
+_log = _logging.getLogger(__name__)
+SARVAM_SPEAKER = _os.getenv("SARVAM_TTS_SPEAKER", "shubh_enhi_ads")
+
+
+def sarvam_ready() -> bool:
+    return bool(_os.getenv("SARVAM_API_KEY"))
+
+
+def _sarvam_client():
+    from sarvamai import SarvamAI
+    return SarvamAI(api_subscription_key=_os.environ["SARVAM_API_KEY"])
+
+
+def _sarvam_down(msg="Indian-language speech is not set up on the server.") -> JsonResponse:
+    return JsonResponse({"ok": False, "code": "sarvam_unavailable", "message": msg}, status=503)
+
+
+@require_POST
+@api_login_required
+def voice_stt(request):
+    """Speech -> text with Sarvam (saaras:v4). Audio is forwarded and discarded,
+    never stored or logged. The user's contact names are sent as hints so names
+    like "Rahul Verma" are recognised more reliably."""
+    if not sarvam_ready():
+        return _sarvam_down()
+    audio = request.FILES.get("audio")
+    if audio is None or audio.size > MAX_AUDIO_BYTES * 4:
+        return JsonResponse({"ok": False, "code": "no_audio", "message": "No audio received."}, status=400)
+    lang = request.POST.get("lang", "").strip() or None
+    data = audio.read()
+    args = {"file": (audio.name or "audio.webm", data, audio.content_type or "audio/webm"),
+            "model": "saaras:v4", "mode": "transcribe"}
+    if lang:
+        args["language_code"] = lang
+    names = [c.name for c in request.user.account.contacts.all()][:30]
+    try:
+        client = _sarvam_client()
+        try:
+            resp = client.speech_to_text.transcribe(**args, keyterms=names)
+        except Exception:  # noqa: BLE001  older API versions may not accept keyterms
+            resp = client.speech_to_text.transcribe(**args)
+        return JsonResponse({"ok": True, "transcript": resp.transcript or "",
+                             "language_code": resp.language_code or lang or "en-IN"})
+    except Exception:  # noqa: BLE001
+        _log.exception("Sarvam STT failed")
+        return JsonResponse({"ok": False, "code": "stt_error",
+                             "message": "I couldn't hear that clearly. Please try again."}, status=502)
+
+
+@require_POST
+@api_login_required
+def voice_tts(request):
+    """Text -> speech with Sarvam (bulbul:v4-flash). The text is the AGENT'S reply
+    (never a PIN). MP3 is requested because it is ~10x smaller than WAV, so the
+    voice starts sooner; repeated phrases come from Sarvam's cache."""
+    if not sarvam_ready():
+        return _sarvam_down()
+    data = _body(request)
+    text = str(data.get("text", "")).strip()[:1000]
+    lang = str(data.get("language_code", "en-IN")).strip() or "en-IN"
+    if not text:
+        return JsonResponse({"ok": False, "code": "no_text", "message": "No text to speak."}, status=400)
+    base = {"text": text, "model": "bulbul:v4-flash", "language_code": lang, "speaker": SARVAM_SPEAKER}
+    try:
+        client = _sarvam_client()
+        try:
+            resp = client.text_to_speech.convert(**base, output_audio_codec="mp3", speech_sample_rate=22050,
+                                                 enable_cached_responses=True)
+            mime = "audio/mpeg"
+        except Exception:  # noqa: BLE001  fall back to Aniket's tested settings
+            resp = client.text_to_speech.convert(**base, speech_sample_rate=22050)
+            mime = "audio/wav"
+        return JsonResponse({"ok": True, "audio_b64": "".join(resp.audios), "mime": mime})
+    except Exception:  # noqa: BLE001
+        _log.exception("Sarvam TTS failed")
+        return JsonResponse({"ok": False, "code": "tts_error", "message": "Voice reply unavailable."}, status=502)
+
+
+# ---------------------------------------------------------------- sign up
+
+@ensure_csrf_cookie
+def signup_page(request):
+    if request.user.is_authenticated and hasattr(request.user, "account"):
+        return redirect("/app/")
+    return render(request, "bank/signup.html")
+
+
+@require_POST
+def signup(request):
+    d = _body(request)
+    result = services.create_customer(d.get("full_name"), d.get("phone"), d.get("password"), d.get("pin"))
+    if not result["ok"]:
+        return _respond(result)
+    user = authenticate(request, username=result["phone"], password=d.get("password"))
+    login(request, user)
+    return JsonResponse({"ok": True, "code": "signed_up", "message": result["message"],
+                         "user": services.get_user_details(user.account)})
+
+
+@require_POST
+@api_login_required
+@voice_required
+def add_contact(request):
+    d = _body(request)
+    return _respond(services.add_contact(request.user.account, d.get("name"), d.get("upi_id")))
+
+
+# ---------------------------------------------------------------- analytics
+
+from django.http import Http404  # noqa: E402
+
+from .analysis import build_analysis, normalize_category  # noqa: E402
+from .models import Analysis  # noqa: E402
+
+
+@require_GET
+@api_login_required
+def analysis_live(request):
+    """GET /api/analysis/?category=food&period=last_month (used by the page's selectors)."""
+    q = request.GET
+    return JsonResponse({"ok": True, **build_analysis(request.user.account, q.get("category"), q.get("period"))})
+
+
+@require_GET
+@api_login_required
+def analysis_saved(request, analysis_id):
+    a = Analysis.objects.filter(pk=analysis_id, account=request.user.account).first()
+    if a is None:                                   # someone else's (or made-up) id
+        return JsonResponse({"ok": False, "code": "not_found", "message": "Analysis not found."}, status=404)
+    p = a.params or {}
+    return JsonResponse({"ok": True, "params": p,
+                         **build_analysis(request.user.account, p.get("category"), p.get("period"))})
+
+
+@ensure_csrf_cookie
+def analysis_page(request, analysis_id=None):
+    if not (request.user.is_authenticated and hasattr(request.user, "account")):
+        return redirect("/login/")
+    params = {"category": "all", "period": "last_30_days"}
+    if analysis_id is not None:
+        a = Analysis.objects.filter(pk=analysis_id, account=request.user.account).first()
+        if a is None:
+            raise Http404("Analysis not found")
+        params = {"category": normalize_category(a.params.get("category")),
+                  "period": a.params.get("period") or "last_30_days"}
+    return render(request, "bank/analysis.html", {"params": params, "analysis_id": analysis_id})

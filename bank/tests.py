@@ -338,10 +338,12 @@ class WebTests(TestCase):
         j = "application/json"
         self.assertEqual(self.client.post("/api/agent/chat/", {"message": "hi"}, content_type=j).status_code, 401)
         self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=j)
+        # a phrasing the instant path doesn't know goes to the AI agent
         with patch.object(agent, "get_model", return_value=scripted(
                 ("start_payment", {"recipient_name": "Aman", "amount": 900}), "Enter your PIN.")):
-            r = self.client.post("/api/agent/chat/", {"message": "send 900 to aman"}, content_type=j).json()
-        self.assertEqual(r["reply"], "Enter your PIN.")
+            r = self.client.post("/api/agent/chat/", {"message": "could you kindly arrange nine hundred for aman"},
+                                 content_type=j).json()
+        self.assertEqual((r["reply"], r["source"]), ("Enter your PIN.", "ai"))
         self.assertTrue(r["pending_payment"]["needs_pin"])
         # The website then sends the PIN straight to Django (never through the AI).
         url = f"/api/payments/{r['pending_payment']['id']}/confirm/"
@@ -811,3 +813,270 @@ class DashboardApiTests(TestCase):
             self.assertIn(f'data-view="{v}"', html)
         for el in ["pinOverlay", "voiceOverlay", "composer", "reVoice"]:
             self.assertIn(f'id="{el}"', html)
+
+
+# ======================================================================= analytics
+from datetime import date, timedelta as _td  # noqa: E402
+
+from django.core.management import call_command  # noqa: E402
+from django.utils import timezone as _tz  # noqa: E402
+
+import json  # noqa: E402
+
+from asgiref.sync import async_to_sync  # noqa: E402
+
+from . import analysis, intents, views  # noqa: E402
+from .categories import categorize  # noqa: E402
+from .models import Analysis  # noqa: E402
+
+
+def paid(acct, name, amount, days_ago=1, kind="merchant"):
+    c, _ = Contact.objects.get_or_create(account=acct, name=name, defaults={"upi_id": f"{name.lower().replace(' ', '')}@upi", "kind": kind})
+    p = Payment.objects.create(account=acct, contact=c, recipient_name=name, upi_id=c.upi_id, amount=Decimal(str(amount)),
+                               status=Payment.Status.SUCCESS, auth_required="VOICE_CONFIRM", auth_used="VOICE_CONFIRM",
+                               category=categorize(name, kind))
+    when = _tz.now() - _td(days=days_ago)
+    Payment.objects.filter(pk=p.pk).update(created_at=when, completed_at=when)
+    return p
+
+
+class CategoryTests(TestCase):
+    def test_rules(self):
+        self.assertEqual(categorize("Swiggy"), "food")
+        self.assertEqual(categorize("Uber India"), "travel")
+        self.assertEqual(categorize("BigBasket"), "groceries")
+        self.assertEqual(categorize("Apollo Pharmacy"), "health")
+        self.assertEqual(categorize("Adani Electricity", "biller"), "bills")
+        self.assertEqual(categorize("Rahul Sharma", "person"), "transfers")
+        self.assertEqual(categorize("Some Shop"), "other")
+
+    def test_new_payments_are_categorised(self):
+        acct = make_account()
+        Contact.objects.create(account=acct, name="Zomato", upi_id="z@upi", kind="merchant")
+        r = services.initiate_payment(acct, "Zomato", 200)
+        self.assertEqual(Payment.objects.get(pk=r["payment_id"]).category, "food")
+
+    def test_backfill_command(self):
+        acct = make_account()
+        p = paid(acct, "Netflix", 199)
+        Payment.objects.filter(pk=p.pk).update(category="other")
+        call_command("backfill_categories", stdout=io.StringIO())
+        self.assertEqual(Payment.objects.get(pk=p.pk).category, "entertainment")
+
+
+class AnalysisTests(TestCase):
+    def setUp(self):
+        self.acct = make_account()
+        for i in range(12):
+            paid(self.acct, "Swiggy" if i % 2 else "Zomato", 100 + i * 10, days_ago=1 + i * 2)
+        paid(self.acct, "Uber", 300, days_ago=3)
+        paid(self.acct, "Uber", 50, days_ago=40)           # previous period
+        other = make_account(phone="9000000002")
+        paid(other, "Swiggy", 99999, days_ago=2)            # never counted for self.acct
+
+    def test_totals_match_the_database(self):
+        spec = analysis.build_analysis(self.acct, "food", "last_30_days")
+        db = sum(p.amount for p in Payment.objects.filter(account=self.acct, category="food",
+                 created_at__date__gte=_tz.localdate() - _td(days=29)))
+        total = next(k for k in spec["kpis"] if k["id"] == "total")
+        self.assertEqual(Decimal(str(total["raw"])), db)
+        self.assertNotIn("99,999", json.dumps(spec))
+
+    def test_period_parsing(self):
+        today = date(2026, 10, 23)
+        self.assertEqual(analysis.parse_period("last_month", today)[:2], (date(2026, 9, 1), date(2026, 9, 30)))
+        self.assertEqual(analysis.parse_period("this month", today)[:2], (date(2026, 10, 1), today))
+        self.assertEqual(analysis.parse_period("last 7 days", today)[:2], (date(2026, 10, 17), today))
+        self.assertEqual(analysis.parse_period("this_year", today)[:2], (date(2026, 1, 1), today))
+        self.assertEqual(analysis.parse_period("last_year", today)[:2], (date(2025, 1, 1), date(2025, 12, 31)))
+        self.assertEqual(analysis.parse_period({"start": "2026-02-01", "end": "2026-02-10"}, today)[:2], (date(2026, 2, 1), date(2026, 2, 10)))
+        self.assertEqual(analysis.parse_period("nonsense", today)[3], "last_30_days")
+        self.assertEqual(analysis.parse_period("last 3 months", today)[3], "last_3_months")
+
+    def test_chart_selection_depends_on_the_data(self):
+        food = [c["type"] for c in analysis.build_analysis(self.acct, "food", "last_30_days")["charts"]]
+        self.assertIn("line", food)                 # short period, one category -> daily trend
+        self.assertIn("horizontal_bar", food)       # two payees
+        self.assertNotIn("donut", food)             # never a donut for one category
+        overall = [c["type"] for c in analysis.build_analysis(self.acct, "all", "last_30_days")["charts"]]
+        self.assertIn("donut", overall)
+        travel = analysis.build_analysis(self.acct, "travel", "last_30_days")
+        self.assertNotIn("horizontal_bar", [c["type"] for c in travel["charts"]])   # one payee only
+        self.assertTrue(all(c["type"] in analysis.CHART_TYPES and c["why"] for c in travel["charts"] + analysis.build_analysis(self.acct)["charts"]))
+
+    def test_empty_state(self):
+        spec = analysis.build_analysis(self.acct, "health", "last_7_days")
+        self.assertTrue(spec["empty"]); self.assertIn("No health payments", spec["message"])
+
+    def test_indian_digit_grouping(self):
+        self.assertEqual(analysis.inr(1234567), "₹12,34,567")
+        self.assertEqual(analysis.inr(999), "₹999")
+        self.assertEqual(analysis.inr("1500.50"), "₹1,500.50")
+
+    def test_api_and_ownership(self):
+        j = "application/json"
+        mine = Analysis.objects.create(account=self.acct, params={"category": "food", "period": "last_month"})
+        theirs = Analysis.objects.create(account=Account.objects.get(phone="9000000002"), params={})
+        self.assertEqual(self.client.get(f"/api/analysis/{mine.id}/").status_code, 401)
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=j)
+        self.assertEqual(self.client.get(f"/api/analysis/{mine.id}/").json()["category"], "food")
+        self.assertEqual(self.client.get(f"/api/analysis/{theirs.id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/analysis/{theirs.id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/analysis/{mine.id}/").status_code, 200)
+        r = self.client.get("/api/analysis/?category=travel&period=last_3_months").json()
+        self.assertEqual((r["category"], r["period"]["key"]), ("travel", "last_3_months"))
+
+    def test_agent_tool_is_bound_to_the_logged_in_account(self):
+        ui = []
+        tools = {t.name: t for t in agent.build_tools(self.acct, ui)}
+        out = async_to_sync(tools["analyze_spending"].ainvoke)({"category": "food", "period": "last_month"})
+        self.assertIn("Analysis ready", out)
+        a = Analysis.objects.get(pk=ui[0]["id"])
+        self.assertEqual((a.account_id, a.params["category"]), (self.acct.pk, "food"))
+
+    def test_seed_demo_is_idempotent_and_rich(self):
+        call_command("seed_demo", stdout=io.StringIO())
+        n = Payment.objects.filter(account__phone="9876543210").count()
+        call_command("seed_demo", stdout=io.StringIO())
+        self.assertEqual(Payment.objects.filter(account__phone="9876543210").count(), n)
+        self.assertTrue(60 <= n <= 110, n)
+
+
+# ======================================================================= instant answers
+@override_settings(VOICE_REQUIRED=False)
+class InstantPathTests(TestCase):
+    def setUp(self):
+        self.acct = make_account()
+        Contact.objects.create(account=self.acct, name="Adani Electricity", upi_id="a@bill", kind="biller")
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type="application/json")
+
+    def say(self, text, lang="en-IN"):
+        with patch.object(agent, "get_model", side_effect=AssertionError("the AI should not be called")):
+            return self.client.post("/api/agent/chat/", {"message": text, "lang": lang}, content_type="application/json").json()
+
+    def test_balance_in_english_and_hindi(self):
+        r = self.say("what's my balance?")
+        self.assertEqual((r["reply"], r["source"]), ("Your balance is ₹5,000.", "instant"))
+        self.assertEqual(self.say("मेरा बैलेंस कितना है", "hi-IN")["reply"], "आपका बैलेंस ₹5,000 है।")
+
+    def test_send_then_yes(self):
+        r = self.say("send 300 to Aman")
+        self.assertIn("Send ₹300 to Aman? Say yes", r["reply"])
+        self.assertFalse(r["pending_payment"]["needs_pin"])
+        r = self.say("yes")
+        self.assertIn("₹300 sent to Aman", r["reply"])
+        self.acct.refresh_from_db(); self.assertEqual(self.acct.balance, Decimal("4700"))
+
+    def test_hindi_send_and_haan(self):
+        r = self.say("अमन को 200 रुपये भेजो", "hi-IN")
+        self.assertIn("Aman को ₹200 भेजूँ?", r["reply"])
+        self.assertIn("हो गया", self.say("हाँ", "hi-IN")["reply"])
+
+    def test_no_cancels(self):
+        self.say("send 100 to Aman")
+        self.assertEqual(self.say("no")["reply"], "Okay, I've cancelled that payment.")
+        self.assertEqual(Payment.objects.filter(status="CANCELLED").count(), 1)
+
+    def test_yes_never_confirms_a_pin_payment(self):
+        r = self.say("pay my electricity bill 1200")
+        self.assertTrue(r["pending_payment"]["needs_pin"])
+        self.assertIn("PIN", r["reply"])
+        self.assertIn("PIN", self.say("yes")["reply"])
+        self.assertEqual(Payment.objects.filter(status="SUCCESS").count(), 0)
+
+    def test_ambiguous_name_asks_which(self):
+        self.assertIn("Rahul Sharma", self.say("send 50 to rahul")["reply"])
+
+    def test_navigation_and_forms(self):
+        self.assertEqual(self.say("open settings")["ui"], [{"type": "navigate", "page": "settings"}])
+        self.assertEqual(self.say("सेटिंग्स खोलो", "hi-IN")["ui"], [{"type": "navigate", "page": "settings"}])
+        self.assertEqual(self.say("go to my profile")["ui"][0]["page"], "profile")
+        self.assertEqual(self.say("I want to pay a bill")["ui"][0]["form"], "bills")
+        self.assertEqual(self.say("speak in hindi")["ui"][0], {"type": "setting", "setting": "language", "value": "hi-IN"})
+        self.assertEqual(self.say("freeze my card")["ui"][0]["value"], "on")
+
+    def test_analysis_by_voice(self):
+        r = self.say("analyse my food spending last month")
+        self.assertEqual(r["analysis"]["title"], "Food spending, last month")
+        self.assertEqual(r["analysis"]["url"], f"/analysis/{r['analysis']['id']}/")
+        self.assertEqual(self.say("open it")["ui"][0], {"type": "open_analysis", "url": r["analysis"]["url"]})
+
+    def test_analysis_still_answers_if_the_database_cannot_save_it(self):
+        # e.g. a shared database with a different, older analysis table
+        from django.db import DatabaseError
+        with patch.object(Analysis.objects, "create", side_effect=DatabaseError("column params does not exist")):
+            r = self.say("analyse my food spending last month")
+        self.assertEqual(r["source"], "instant")
+        self.assertEqual(r["analysis"]["url"], "/analysis/?category=food&period=last_month")
+        self.assertIsNone(r["analysis"]["id"])
+
+    def test_unclear_or_other_language_goes_to_the_ai(self):
+        for text, lang in [("send money to my friend from college", "en-IN"), ("send 300", "en-IN"), ("என் இருப்பு என்ன", "ta-IN")]:
+            with patch.object(agent, "get_model", return_value=scripted("AI reply")):
+                r = self.client.post("/api/agent/chat/", {"message": text, "lang": lang}, content_type="application/json").json()
+            self.assertEqual((r["reply"], r["source"]), ("AI reply", "ai"), text)
+
+    def test_changing_language_starts_a_fresh_conversation(self):
+        self.say("what's my balance")
+        self.say("मेरा बैलेंस", "hi-IN")
+        self.assertEqual(len(self.client.session["chat"]), 2)
+
+    def test_system_prompt_has_live_facts_and_language(self):
+        p = agent.build_system_prompt(self.acct, "ta-IN")
+        self.assertIn("Tamil", p); self.assertIn("₹5,000", p); self.assertIn("Adani Electricity (biller)", p)
+
+
+# ======================================================================= sign up, contacts, speech
+class SignupTests(TestCase):
+    def post(self, body):
+        return self.client.post("/api/signup/", body, content_type="application/json")
+
+    def test_signup_creates_a_ready_account_and_logs_in(self):
+        r = self.post({"full_name": "Kamla Devi", "phone": "98111 22233", "password": "secret1", "pin": "5829"})
+        self.assertEqual(r.status_code, 200, r.json())
+        acct = Account.objects.get(phone="9811122233")
+        self.assertEqual(acct.balance, services.STARTER_BALANCE)
+        self.assertTrue(acct.check_pin("5829"))
+        self.assertTrue(acct.contacts.filter(name="Adani Electricity").exists())
+        self.assertEqual(self.client.get("/api/me/").json()["name"], "Kamla Devi")
+        self.assertEqual(self.client.get("/signup/").status_code, 302)
+
+    def test_signup_validation(self):
+        good = {"full_name": "Kamla Devi", "phone": "9811122233", "password": "secret1", "pin": "5829"}
+        for change, code in [({"phone": "12345"}, "bad_phone"), ({"password": "abc"}, "bad_password"),
+                             ({"pin": "1234"}, "weak_pin"), ({"pin": "12a4"}, "bad_pin"), ({"full_name": ""}, "bad_name")]:
+            self.assertEqual(self.post({**good, **change}).json()["code"], code)
+        make_account(phone="9811122233")
+        self.assertEqual(self.post(good).json()["code"], "phone_taken")
+
+    @override_settings(VOICE_REQUIRED=False)
+    def test_add_contact(self):
+        make_account()
+        j = "application/json"
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=j)
+        self.assertEqual(self.client.post("/api/contacts/", {"name": "Sunita", "upi_id": "bad"}, content_type=j).json()["code"], "bad_upi")
+        self.assertTrue(self.client.post("/api/contacts/", {"name": "Sunita", "upi_id": "sunita@okhdfc"}, content_type=j).json()["ok"])
+        self.assertEqual(self.client.post("/api/contacts/", {"name": "sunita", "upi_id": "s2@okhdfc"}, content_type=j).json()["code"], "contact_exists")
+
+
+class SarvamTests(TestCase):
+    def setUp(self):
+        make_account()
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type="application/json")
+
+    def test_without_a_key_the_browser_takes_over(self):
+        with patch.dict("os.environ", {"SARVAM_API_KEY": ""}):
+            r = self.client.post("/api/voice/tts/", {"text": "hi"}, content_type="application/json")
+            self.assertEqual((r.status_code, r.json()["code"]), (503, "sarvam_unavailable"))
+            self.assertFalse(self.client.get("/api/voice/status/").json()["sarvam"])
+
+    def test_stt_and_tts_with_a_key(self):
+        from types import SimpleNamespace
+        fake = SimpleNamespace(
+            speech_to_text=SimpleNamespace(transcribe=lambda **kw: SimpleNamespace(transcript="अमन को 200 भेजो", language_code="hi-IN")),
+            text_to_speech=SimpleNamespace(convert=lambda **kw: SimpleNamespace(audios=["QUJD"])))
+        with patch.dict("os.environ", {"SARVAM_API_KEY": "test"}), patch.object(views, "_sarvam_client", return_value=fake):
+            r = self.client.post("/api/voice/stt/", {"audio": clip(), "lang": "hi-IN"}).json()
+            self.assertEqual(r["transcript"], "अमन को 200 भेजो")
+            r = self.client.post("/api/voice/tts/", {"text": "नमस्ते", "language_code": "hi-IN"}, content_type="application/json").json()
+            self.assertEqual((r["audio_b64"], r["mime"]), ("QUJD", "audio/mpeg"))

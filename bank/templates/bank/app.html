@@ -1,12 +1,14 @@
-<!doctype html>
+{% load static %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EchoMint</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{% static 'bank/fonts/fonts.css' %}">
+{% load static %}
+<script type="importmap">
+{ "imports": { "three": "{% static 'bank/vendor/three/three.module.min.js' %}", "three/addons/": "{% static 'bank/vendor/three/addons/' %}" } }
+</script>
 <style>
   :root {
     /* soft, low-glare theme: cool off-white, soft black, one blue */
@@ -151,6 +153,18 @@
   .state[data-s="listening"] .sdot, .state[data-s="thinking"] .sdot { background: var(--signal); animation: blink 1s infinite; }
   .state[data-s="confirm"] .sdot, .state[data-s="pin"] .sdot { background: var(--warn); }
   .state .sval { margin-left: auto; padding: 2px 10px; border-radius: 8px; background: var(--surface2); font-weight: 700; font-size: .8rem; }
+  .robot-stage { position: relative; height: 210px; flex: none; background: radial-gradient(120% 90% at 50% 100%, #dfe5f0 0%, #eef1f6 55%, var(--surface) 100%); border-bottom: 1px solid var(--line); cursor: pointer; }
+  .robot-stage canvas { display: block; }
+  .robot-tools { position: absolute; left: 12px; right: 12px; top: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; z-index: 2; }
+  .robot-tools select { width: auto; height: 36px; padding: 0 10px; font-size: .88rem; border-radius: 10px; background: rgba(251,252,253,.9); }
+  .hf { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .85rem; font-weight: 700; background: rgba(251,252,253,.9); padding: 6px 10px; border-radius: 10px; border: 1.5px solid var(--line); cursor: pointer; }
+  .hf input { width: 18px; height: 18px; margin: 0; accent-color: var(--signal); }
+  #speed { padding: 0 18px; color: var(--slate); font-size: .8rem; min-height: 16px; }
+  .open-analysis { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 9px 14px; border-radius: 12px; background: var(--signal); color: #fff; font-weight: 700; text-decoration: none; }
+  .open-analysis svg.i { width: 18px; height: 18px; }
+  .open-analysis:hover { background: #2448cf; }
+  .navlink { width: 100%; display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-radius: 14px; color: var(--slate); text-decoration: none; transition: background-color .2s, color .2s; }
+  .navlink:hover { background: var(--surface2); color: var(--ink); }
   #heard { min-height: 20px; padding: 0 18px 6px; color: var(--slate); font-size: .9rem; font-style: italic; }
   .composer { border-top: 1px solid var(--line); padding: 12px 14px; display: flex; gap: 10px; align-items: center; }
   .composer input { flex: 1; height: 50px; }
@@ -258,7 +272,12 @@
         <div class="card"><h2 style="margin-bottom:16px">Savings account</h2><dl class="dl" id="acctDetails"></dl></div>
         <div class="card"><h2 style="margin-bottom:16px">Today's spending</h2><div id="todayBox"></div><p style="color:var(--slate);margin:14px 0 0">The daily limit stops anyone from emptying your account in one day. Change it in Settings.</p></div>
       </div>
-      <div class="card" style="margin-top:18px"><div class="panel-head"><h2>People and billers you can pay</h2><button class="linkbtn" data-act="send">Send money</button></div><ul class="list" id="contactsList"></ul></div>
+      <div class="card" style="margin-top:18px"><div class="panel-head"><h2>People and billers you can pay</h2><button class="linkbtn" data-act="send">Send money</button></div><ul class="list" id="contactsList"></ul>
+        <form id="contactForm" class="form-grid" style="margin-top:16px;align-items:end" novalidate>
+          <div class="field" style="margin:0"><label for="cName">Add a person</label><input id="cName" placeholder="Name, like Sunita Aunty"></div>
+          <div class="field" style="margin:0"><label for="cUpi">UPI ID</label><input id="cUpi" placeholder="name@okbank" autocapitalize="off"></div>
+          <button class="primary" type="submit" style="grid-column:1/-1;margin-top:4px">Add contact</button><p class="err" id="cErr" role="alert" style="grid-column:1/-1"></p>
+        </form></div>
     </section>
 
     <!-- PAYMENTS & TRANSFERS -->
@@ -344,7 +363,8 @@
       <div class="hello"><h1>Settings</h1><p>Make EchoMint easier to see, hear and use.</p></div>
       <div class="two" style="margin-top:0">
         <div class="card"><h2 style="margin-bottom:16px">Talking and reading</h2>
-          <div class="field"><label for="lang">Language</label><select id="lang"><option value="en-IN">English</option><option value="hi-IN">हिन्दी</option></select></div>
+          <div class="field"><label for="lang">Language</label><select id="lang"></select></div>
+          <div class="field"><label for="engine">Speech engine</label><select id="engine"><option value="auto">Automatic (fastest)</option><option value="sarvam">Sarvam AI for every language</option><option value="browser">Browser only</option></select></div>
           <div class="field"><label for="speakOn">Read replies out loud</label><select id="speakOn"><option value="1">On</option><option value="0">Off</option></select></div>
           <div class="field"><label for="textSize">Text size</label><select id="textSize"><option value="">Large</option><option value="big">Extra large</option></select></div></div>
         <form class="card" id="limitForm" novalidate><h2 style="margin-bottom:6px">Daily limit</h2><p style="color:var(--slate);margin:0 0 14px" id="limitNow"></p>
@@ -357,8 +377,15 @@
 
   <aside class="assistant" id="assistant" aria-label="EchoMint assistant">
     <div class="as-head"><span class="bot" id="botIcon"></span><div><b>EchoMint Assistant</b><small>Talk or type. Nothing moves until you confirm.</small></div><button class="x" id="closeAs" aria-label="Close assistant"></button></div>
+    <div class="robot-stage" id="robot" title="Tap me">
+      <div class="robot-tools">
+        <select id="langQuick" aria-label="Language"></select>
+        <label class="hf"><input type="checkbox" id="handsFree"> Hands-free</label>
+      </div>
+    </div>
     <div id="log" aria-live="polite"></div>
     <div class="state" id="state" data-s="ready"><span class="sdot"></span><span>Assistant status</span><span class="sval" id="stateVal">Ready</span></div>
+    <div id="speed" aria-live="off"></div>
     <div id="heard"></div>
     <form class="composer" id="composer">
       <input id="text" placeholder="Type your message…" autocomplete="off" aria-label="Message">
@@ -418,6 +445,8 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2));
 const when = (iso) => new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+const LANG_NAMES = { "en-IN": "English", "hi-IN": "हिन्दी", "ta-IN": "தமிழ்", "te-IN": "తెలుగు", "bn-IN": "বাংলা", "mr-IN": "मराठी",
+  "gu-IN": "ગુજરાતી", "kn-IN": "ಕನ್ನಡ", "ml-IN": "മലയാളം", "pa-IN": "ਪੰਜਾਬੀ", "od-IN": "ଓଡ଼ିଆ" };
 
 /* ---------- icons (lucide-style line icons) ---------- */
 const P = {
@@ -441,17 +470,20 @@ const P = {
   check: '<path d="M20 6 9 17l-5-5"/>',
   alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>',
   chev: '<path d="m9 18 6-6-6-6"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M7 15v3M11 10v8M15 13v5M19 6v12"/>',
 };
 const I = (n, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
 
 /* ---------- navigation ---------- */
 const VIEWS = [["dashboard", "Dashboard", "dashboard"], ["accounts", "Accounts", "accounts", 1], ["payments", "Payments & Transfers", "send", 1],
   ["investments", "Investments", "invest", 1], ["cards", "Cards", "card"], ["loans", "Loans", "loan"], ["support", "Support", "support"],
-  ["profile", "Profile", "user"], ["settings", "Settings", "settings"]];
-$("#nav").innerHTML = VIEWS.map(([id, name, ic, chev]) =>
-  `<button type="button" data-go="${id}">${I(ic)}<span>${name}</span>${chev ? I("chev", "i chev") : ""}</button>`).join("");
+  ["analytics", "Analytics", "invest", 0, "/analysis/"], ["profile", "Profile", "user"], ["settings", "Settings", "settings"]];
+$("#nav").innerHTML = VIEWS.map(([id, name, ic, chev, href]) => href
+  ? `<a class="navlink" href="${href}">${I(ic === "invest" ? "chart" : ic)}<span>${name}</span></a>`
+  : `<button type="button" data-go="${id}">${I(ic)}<span>${name}</span>${chev ? I("chev", "i chev") : ""}</button>`).join("");
 function showView(id) {
-  if (!VIEWS.some(v => v[0] === id)) id = "dashboard";
+  if (id === "analytics") { location.href = "/analysis/"; return; }
+  if (!VIEWS.some(v => v[0] === id && !v[4])) id = "dashboard";
   $$(".view").forEach(v => v.classList.toggle("hidden", v.dataset.view !== id));
   $$("#nav button").forEach(b => b.dataset.go === id ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   if (location.hash.slice(1) !== id) history.replaceState(null, "", "#" + id);
@@ -482,8 +514,9 @@ async function boot() {
 function showApp(me) {
   ME = me;
   $("#whoName").textContent = me.name; $("#avatar").textContent = me.name[0] || "A";
-  $("#hello").textContent = `Welcome back, ${me.name.split(" ")[0]}!`;
-  if (!$("#log").children.length) addMsg("bot", `Hi ${me.name.split(" ")[0]}! Tap the microphone and tell me what to do. For example: “send 300 to Aman”, “pay my electricity bill” or “what's my balance?”`);
+  $("#hello").textContent = `${store.get("seen-" + me.account_number) ? "Welcome back" : "Welcome"}, ${me.name.split(" ")[0]}!`;
+  store.set("seen-" + me.account_number, "1");
+  if (!$("#log").children.length) addMsg("bot", `Hi ${me.name.split(" ")[0]}! Tap the microphone and tell me what to do. For example: “what's my balance?”, “pay my electricity bill” or “open settings”.`);
   renderAll(); refresh(); ensureVoice();
 }
 async function refresh() {
@@ -523,7 +556,7 @@ function renderCards() {
 }
 function txRow(p) {
   const kind = (ME.contacts.find(c => c.name === p.recipient) || {}).kind || "person";
-  const ic = { biller: "bill", recharge: "phone", gold: "gold" }[kind] || "send";
+  const ic = { biller: "bill", recharge: "phone", gold: "gold", merchant: "card" }[kind] || "send";
   const ok = p.status === "Success";
   return `<li><span class="ico">${I(ic)}</span><span class="who2"><b>${esc(p.recipient)}</b><small>${when(p.timestamp)}${p.verified_with ? " · " + (p.verified_with === "PIN" ? "PIN" : "voice") : ""}</small></span>
     <span class="amt">−${rupees(p.amount)}<br><span class="pill ${ok ? "ok" : "bad"}">${ok ? "completed" : esc(p.status.toLowerCase())}</span></span></li>`;
@@ -543,7 +576,7 @@ function renderAccounts() {
     <dt>Type</dt><dd>Savings</dd><dt>Balance</dt><dd>${rupees(ME.balance)}</dd><dt>Registered phone</dt><dd>${esc(ME.phone)}</dd>`;
   const limit = Number(ME.daily_limit), spent = Number(ME.spent_today || 0);
   $("#todayBox").innerHTML = `<div style="font:800 1.8rem var(--display)">${rupees(spent)} <span style="font:400 1rem var(--body,inherit);color:var(--slate)">of ${rupees(limit)}</span></div><div class="meter"><i style="width:${Math.min(100, spent / limit * 100)}%"></i></div>`;
-  const label = { person: "Person", biller: "Bill", recharge: "Mobile recharge", gold: "Digital gold" };
+  const label = { person: "Person", biller: "Bill", recharge: "Mobile recharge", gold: "Digital gold", merchant: "Shop" };
   $("#contactsList").innerHTML = ME.contacts.map(c => `<li><span class="ico">${I({ biller: "bill", recharge: "phone", gold: "gold" }[c.kind] || "user")}</span><span class="who2"><b>${esc(c.name)}</b><small>${esc(c.upi_id)}</small></span><span class="tag">${label[c.kind] || "Person"}</span></li>`).join("");
 }
 function filteredStatement() {
@@ -628,7 +661,7 @@ async function pay(recipient, amount, err) {
 }
 function done(message) {
   $("#sheetBody").innerHTML = `<div class="done"><div class="tick">${I("check")}</div><div class="confirm-big" style="font-size:1.4rem">${esc(message)}</div><button class="primary" id="okBtn">Done</button></div>`;
-  $("#okBtn").onclick = closeSheet; addMsg("bot", message, "ok"); speak(message); refresh();
+  $("#okBtn").onclick = closeSheet; addMsg("bot", message, "ok"); robotHappy(); speak(message); refresh();
 }
 function moneyForm({ toLabel, options, presets, extra = "", submit = "Continue", note = "" }) {
   return `<form id="mf" novalidate>
@@ -681,6 +714,12 @@ const ACTIONS = {
 };
 
 /* ---------- profile + settings forms ---------- */
+$("#contactForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); $("#cErr").textContent = "";
+  const { status, data } = await api("/api/contacts/", "POST", { name: $("#cName").value, upi_id: $("#cUpi").value });
+  if (status === 403 && data.code === "voice_required") { ensureVoice(); return; }
+  if (data.ok) { e.target.reset(); toast(data.message); refresh(); } else $("#cErr").textContent = data.message;
+});
 $("#pinForm").addEventListener("submit", async (e) => {
   e.preventDefault(); const err = $("#pinErr"); err.textContent = "";
   if ($("#newPin").value !== $("#newPin2").value) { err.textContent = "The two new PINs don't match."; return; }
@@ -694,9 +733,17 @@ $("#limitForm").addEventListener("submit", async (e) => {
   if (status === 403 && data.code === "voice_required") { ensureVoice(); return; }
   if (data.ok) { e.target.reset(); toast(data.message); refresh(); } else err.textContent = data.message;
 });
-$("#lang").value = store.get("lang") || "en-IN"; $("#speakOn").value = store.get("speakOn") || "1"; $("#textSize").value = store.get("textSize") || "";
+$("#lang").innerHTML = $("#langQuick").innerHTML = Object.entries(LANG_NAMES).map(([c, n]) => `<option value="${c}">${n}</option>`).join("");
+$("#engine").value = store.get("engine") || "auto"; $("#engine").onchange = () => store.set("engine", $("#engine").value);
+$("#handsFree").checked = store.get("handsFree") === "1"; $("#handsFree").onchange = () => store.set("handsFree", $("#handsFree").checked ? "1" : "0");
+$("#lang").value = store.get("lang") || "en-IN"; $("#langQuick").value = $("#lang").value; $("#speakOn").value = store.get("speakOn") || "1"; $("#textSize").value = store.get("textSize") || "";
 document.documentElement.classList.toggle("big", $("#textSize").value === "big");
-$("#lang").onchange = () => store.set("lang", $("#lang").value);
+async function langChanged(code) {
+  setLang(code); stopSpeaking(); await api("/api/agent/reset/", "POST");
+  addMsg("sys", "Language: " + LANG_NAMES[code]);
+}
+$("#lang").onchange = () => langChanged($("#lang").value);
+$("#langQuick").onchange = () => langChanged($("#langQuick").value);
 $("#speakOn").onchange = () => store.set("speakOn", $("#speakOn").value);
 $("#textSize").onchange = () => { store.set("textSize", $("#textSize").value); document.documentElement.classList.toggle("big", $("#textSize").value === "big"); };
 $("#logoutBtn").addEventListener("click", async () => {
@@ -716,8 +763,14 @@ $("#fab").onclick = () => setAssistant($("#shell").classList.contains("closed"))
 $("#closeAs").onclick = () => setAssistant(false);
 $("#askBtn").onclick = () => { setAssistant(true); $("#text").focus(); };
 setAssistant(store.get("assistant") !== "0" && innerWidth > 1180);
-const STATES = { ready: "Ready", listening: "Listening", thinking: "Thinking", confirm: "Waiting for your yes", pin: "Waiting for your PIN" };
-function setAgent(s, detail) { $("#state").dataset.s = s; $("#stateVal").textContent = detail || STATES[s]; }
+const STATES = { ready: "Ready", listening: "Listening", thinking: "Thinking", speaking: "Speaking", confirm: "Waiting for your yes", pin: "Waiting for your PIN" };
+let BOT = null;
+function setAgent(s, detail) {
+  $("#state").dataset.s = s; $("#stateVal").textContent = detail || STATES[s];
+  if (BOT) BOT.setState({ listening: "listening", thinking: "thinking", speaking: "speaking" }[s] || (s === "confirm" ? "listening" : "idle"));
+}
+function robotLevel(v) { if (BOT) BOT.setLevel(v); }
+function robotHappy() { if (BOT) BOT.happy(2200); }
 
 function addMsg(who, text, extra = "") {
   const d = document.createElement("div");
@@ -730,65 +783,192 @@ function typing() {
   $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight; return d;
 }
 let busy = false;
+const lang = () => $("#lang").value;
+
+/* Carry out what the assistant asked the page to do (open a page, a form, a setting...). */
+function runUi(list) {
+  let leaveTo = null;
+  for (const a of list || []) {
+    if (a.type === "navigate") {
+      if (a.page === "analytics") leaveTo = "/analysis/";
+      else if (a.page === "notifications") { showView("dashboard"); $("#allNotices").click(); }
+      else showView(a.page);
+    } else if (a.type === "form" && ACTIONS[a.form]) {
+      ACTIONS[a.form]();
+      setTimeout(() => {
+        if (a.recipient && $("#mfTo")) { const o = [...$("#mfTo").options].find(o => o.value.toLowerCase().includes(String(a.recipient).toLowerCase())); if (o) $("#mfTo").value = o.value; }
+        if (a.amount && $("#mfAmt")) $("#mfAmt").value = a.amount;
+      }, 80);
+    } else if (a.type === "open_analysis") leaveTo = a.url;
+    else if (a.type === "setting") applySetting(a.setting, a.value);
+    else if (a.type === "logout") leaveTo = "logout";
+    else if (a.type === "download_statement") { showView("payments"); setTimeout(() => $("#csvBtn").click(), 300); }
+    else if (a.type === "refresh") refresh();
+  }
+  return leaveTo;
+}
+function go(where) { if (where === "logout") $("#logoutBtn").click(); else if (where) location.href = where; }
+function applySetting(setting, value) {
+  if (setting === "language") setLang(value);
+  else if (setting === "spoken_replies") { $("#speakOn").value = value === "off" ? "0" : "1"; $("#speakOn").dispatchEvent(new Event("change")); }
+  else if (setting === "text_size") { $("#textSize").value = value === "extra_large" ? "big" : ""; $("#textSize").dispatchEvent(new Event("change")); }
+  else if (setting === "card_frozen") { $("#freeze").checked = value === "on"; $("#freeze").dispatchEvent(new Event("change")); }
+}
+function setLang(code) {
+  if (!LANG_NAMES[code]) return;
+  $("#lang").value = code; $("#langQuick").value = code; store.set("lang", code);
+}
+
 async function send(text) {
   text = (text || "").trim(); if (!text || busy) return;
   setAssistant(true);
   busy = true; stopSpeaking(); addMsg("me", text); setAgent("thinking");
-  const t = typing();
-  const { status, data } = await api("/api/agent/chat/", "POST", { message: text });
+  const t = typing(), t0 = performance.now();
+  const { status, data } = await api("/api/agent/chat/", "POST", { message: text, lang: lang() });
   t.remove(); busy = false;
   if (status === 401) { boot(); return; }
   if (status === 403 && data.code === "voice_required") { setAgent("ready"); addMsg("sys", "Please verify your voice first."); ensureVoice(); return; }
   const reply = data.reply || data.message || "Sorry, something went wrong.";
-  addMsg("bot", reply);
+  const m = addMsg("bot", reply);
+  if (data.analysis) {
+    const b = document.createElement("a"); b.className = "open-analysis"; b.href = data.analysis.url;
+    b.innerHTML = `${I("chart")}<span>Open analysis</span>`; m.appendChild(b); $("#log").scrollTop = $("#log").scrollHeight;
+  }
   if (data.debug_error) addMsg("sys", "debug: " + data.debug_error);
+  if (data.ms !== undefined) $("#speed").textContent = `Answered in ${((performance.now() - t0) / 1000).toFixed(2)} s${data.source === "instant" ? " (instant)" : ""}`;
   if (data.balance !== undefined) setBalance(data.balance);
   refresh();
+  const leave = runUi(data.ui);
+  if (/^(Done|हो गया)/.test(reply) && data.ui && data.ui.some(u => u.type === "refresh")) robotHappy();
   const p = data.pending_payment;
-  if (p && p.needs_pin) { setAgent("pin", `PIN for ${rupees(p.amount)} to ${p.recipient}`); speak(reply, () => openPin(p)); openPin(p); }
+  if (leave) { speak(reply, () => go(leave)); setTimeout(() => go(leave), 4500); return; }
+  if (p && p.needs_pin) { setAgent("pin", `PIN for ${rupees(p.amount)} to ${p.recipient}`); speak(reply); openPin(p); }
   else if (p) { setAgent("confirm", `Say yes: ${rupees(p.amount)} to ${p.recipient}`); speak(reply, () => startListening()); }
-  else { setAgent("ready"); speak(reply); }
+  else { setAgent("ready"); speak(reply, () => { if ($("#handsFree").checked) startListening(); }); }
 }
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#text").value; $("#text").value = ""; send(v); });
 
-/* ---------------- speech: listening ---------------- */
+/* ---------------- speech: listening ----------------
+   English: the browser's own recogniser (streams words as you talk, no upload).
+   Indian languages: Sarvam (much better at Hindi, Tamil, Telugu...).
+   Recording stops ~0.7 s after you stop talking. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, listening = false, finalText = "";
+let rec = null, mediaRec = null, listening = false, finalText = "", micStream = null, SARVAM = false;
+function useSarvamSTT() { const e = $("#engine").value; if (!SARVAM || e === "browser") return false; return e === "sarvam" || lang() !== "en-IN" || !SR; }
+function useSarvamTTS() { const e = $("#engine").value; if (!SARVAM || e === "browser") return false; return e === "sarvam" || lang() !== "en-IN" || !("speechSynthesis" in window); }
 function setListening(on) {
   listening = on; $("#mic").classList.toggle("live", on);
-  if (on) setAgent("listening"); else { $("#heard").textContent = ""; if (!busy && $("#state").dataset.s === "listening") setAgent("ready"); }
+  if (on) setAgent("listening"); else { if (!busy && $("#state").dataset.s === "listening") setAgent("ready"); }
+}
+function blocked() {
+  return busy || !$("#pinOverlay").classList.contains("hidden") || !$("#voiceOverlay").classList.contains("hidden") || $("#sheetBg");
 }
 function startListening() {
-  if (!SR) { addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
-  if (listening || busy || !$("#pinOverlay").classList.contains("hidden") || !$("#voiceOverlay").classList.contains("hidden")) return;
+  if (listening || blocked()) return;
   setAssistant(true); stopSpeaking(); finalText = "";
-  rec = new SR(); rec.lang = $("#lang").value; rec.interimResults = true; rec.continuous = false;
+  if (useSarvamSTT()) sarvamListen(); else browserListen();
+}
+function browserListen() {
+  if (!SR) { if (SARVAM) return sarvamListen(); addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
+  rec = new SR(); rec.lang = lang(); rec.interimResults = true; rec.continuous = false;
   rec.onresult = (e) => {
     let t = ""; for (const r of e.results) t += r[0].transcript;
-    $("#heard").textContent = "“" + t + "”";
+    $("#heard").textContent = "“" + t + "”"; robotLevel(0.5);
     if (e.results[e.results.length - 1].isFinal) finalText = t;
   };
   rec.onerror = (e) => {
     setListening(false);
     if (e.error === "not-allowed") addMsg("sys", "Please allow microphone access in your browser.");
-    else if (e.error === "network") addMsg("sys", "Speech recognition needs internet. You can type instead.");
+    else if (e.error === "network") { if (SARVAM) { $("#engine").value = "sarvam"; sarvamListen(); } else addMsg("sys", "Speech recognition needs internet. You can type instead."); }
   };
-  rec.onend = () => { setListening(false); if (finalText) send(finalText); };
+  rec.onend = () => { setListening(false); robotLevel(0); $("#heard").textContent = ""; if (finalText) send(finalText); };
   try { rec.start(); setListening(true); } catch (e) { setListening(false); }
 }
-$("#mic").addEventListener("click", () => { if (listening) rec.stop(); else startListening(); });
+async function sarvamListen() {
+  try {
+    if (!micStream || !micStream.active) micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) { addMsg("sys", "Please allow microphone access in your browser."); return; }
+  const type = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  const chunks = []; mediaRec = new MediaRecorder(micStream, type ? { mimeType: type } : undefined);
+  const ctx = new (window.AudioContext || window.webkitAudioContext)(), an = ctx.createAnalyser(); an.fftSize = 512;
+  ctx.createMediaStreamSource(micStream).connect(an);
+  const buf = new Uint8Array(an.fftSize); let spoke = false, quietSince = 0, floor = null, seen = 0, gate = 0.03; const t0 = performance.now();
+  const timer = setInterval(() => {
+    an.getByteTimeDomainData(buf); let s = 0; for (const v of buf) s += (v - 128) * (v - 128);
+    const rms = Math.sqrt(s / buf.length) / 128, now = performance.now();
+    robotLevel(Math.min(1, rms * 8));
+    if (seen < 5) {                       // first ~250 ms: measure the room's background noise
+      floor = floor === null ? rms : Math.min(floor, rms); seen++;
+      gate = Math.min(Math.max(floor * 3, 0.02), 0.06); return;
+    }
+    if (rms > gate) { spoke = true; quietSince = 0; $("#heard").textContent = "Listening…"; }
+    else if (spoke && !quietSince) quietSince = now;
+    if ((spoke && quietSince && now - quietSince > 700) || now - t0 > 15000 || (!spoke && now - t0 > 7000)) stop();
+  }, 50);
+  function stop() { clearInterval(timer); try { ctx.close(); } catch (e) {} if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }
+  mediaRec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRec.onstop = async () => {
+    setListening(false); robotLevel(0);
+    if (!spoke) { $("#heard").textContent = ""; return; }
+    setAgent("thinking"); $("#heard").textContent = "Understanding…";
+    const fd = new FormData(); fd.append("audio", new Blob(chunks, { type: type || "audio/webm" }), "speech.webm"); fd.append("lang", lang());
+    const res = await fetch("/api/voice/stt/", { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": csrf() }, body: fd });
+    const d = await res.json().catch(() => ({}));
+    $("#heard").textContent = "";
+    if (d.ok && d.transcript) send(d.transcript);
+    else if (d.code === "sarvam_unavailable") { SARVAM = false; setAgent("ready"); addMsg("sys", "Indian-language speech isn't set up on the server yet, so I'll use the browser instead."); }
+    else { setAgent("ready"); addMsg("sys", d.message || "I couldn't hear that clearly. Please try again."); }
+  };
+  mediaRec.start(); setListening(true); $("#heard").textContent = "Listening…";
+  window._stopRec = stop;
+}
+$("#mic").addEventListener("click", () => {
+  if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
+  else startListening();
+});
 
 /* ---------------- speech: speaking ---------------- */
+let player = null, playerCtx = null, playerAn = null, speakTimer = null;
 function speak(text, onend) {
-  const done = () => { if (onend) onend(); };
-  if ($("#speakOn").value !== "1" || !("speechSynthesis" in window)) { done(); return; }
-  speechSynthesis.cancel();
+  const done = () => { clearInterval(speakTimer); robotLevel(0); if ($("#state").dataset.s === "speaking") setAgent("ready"); if (onend) onend(); };
+  if ($("#speakOn").value !== "1") { if (onend) onend(); return; }
+  stopSpeaking(); setAgent("speaking");
+  if (useSarvamTTS()) sarvamSpeak(text, done); else browserSpeak(text, done);
+}
+function browserSpeak(text, done) {
+  if (!("speechSynthesis" in window)) { done(); return; }
   const u = new SpeechSynthesisUtterance(text.replace(/₹\s?/g, "rupees "));
-  u.lang = $("#lang").value; u.rate = 0.95;
+  u.lang = lang(); u.rate = 0.98;
+  const v = speechSynthesis.getVoices().find(v => v.lang === lang()) || speechSynthesis.getVoices().find(v => v.lang.startsWith(lang().slice(0, 2)));
+  if (v) u.voice = v;
   u.onend = done; u.onerror = done;
+  speakTimer = setInterval(() => robotLevel(0.25 + Math.random() * 0.6), 110);
   speechSynthesis.speak(u);
 }
-function stopSpeaking() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+async function sarvamSpeak(text, done) {
+  try {
+    const r = await api("/api/voice/tts/", "POST", { text, language_code: lang() });
+    if (!r.data.ok) throw new Error(r.data.code);
+    const bytes = Uint8Array.from(atob(r.data.audio_b64), c => c.charCodeAt(0));
+    if (!player) {
+      player = new Audio();
+      try { playerCtx = new (window.AudioContext || window.webkitAudioContext)(); playerAn = playerCtx.createAnalyser(); playerAn.fftSize = 256;
+            playerCtx.createMediaElementSource(player).connect(playerAn); playerAn.connect(playerCtx.destination); } catch (e) { playerAn = null; }
+    }
+    if (playerCtx && playerCtx.state === "suspended") await playerCtx.resume();
+    player.src = URL.createObjectURL(new Blob([bytes], { type: r.data.mime || "audio/wav" }));
+    player.onended = done; player.onerror = done;
+    const lv = new Uint8Array(128);
+    speakTimer = setInterval(() => { if (!playerAn) return robotLevel(0.4 + Math.random() * 0.4); playerAn.getByteTimeDomainData(lv);
+      let s = 0; for (const x of lv) s += Math.abs(x - 128); robotLevel(Math.min(1, s / lv.length / 25)); }, 60);
+    await player.play();
+  } catch (e) { clearInterval(speakTimer); if (e && e.message === "sarvam_unavailable") SARVAM = false; browserSpeak(text, done); }
+}
+function stopSpeaking() {
+  clearInterval(speakTimer);
+  if (player) { try { player.pause(); } catch (e) {} }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+}
 
 /* ---------------- PIN pad ---------------- */
 let pin = "", pending = null, pinBusy = false;
@@ -826,7 +1006,7 @@ async function submitPin() {
   const { data } = await api(`/api/payments/${pending.id}/confirm/`, "POST", { pin });
   pinBusy = false;
   if (data.ok) {
-    closePin(); addMsg("bot", data.message, "ok"); speak(data.message); toast(data.message);
+    closePin(); addMsg("bot", data.message, "ok"); robotHappy(); speak(data.message); toast(data.message);
     if (data.new_balance !== undefined) setBalance(data.new_balance); refresh();
   } else if (data.code === "wrong_pin") {
     $("#pinMsg").textContent = data.message; pin = ""; renderDots();
@@ -925,6 +1105,7 @@ async function newChallenge(n) {
 }
 async function ensureVoice() {
   const { status, data } = await api("/api/voice/status/");
+  if (status === 200) SARVAM = !!data.sarvam;
   if (status !== 200 || !data.required || data.verified) return;
   if (!data.engine_available) { openVoice("error"); return; }
   openVoice(data.enrolled ? "verify" : "enroll");
@@ -933,7 +1114,7 @@ function setEnrollTitle() { $("#vStep").textContent = `Voice setup · Sample ${e
 
 async function openVoice(mode, opts = {}) {
   vMode = mode; enrollClips = []; vBusy = false; vFails = 0; vEnrollPin = opts.pin || null; vCanCancel = !!opts.cancel;
-  stopSpeaking(); if (listening && rec) rec.stop();
+  stopSpeaking(); if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
   $("#vBar").style.width = "0"; vSay(""); $("#vPin").value = "";
   vShow("#vPinBox", false); vShow("#vPinLink", false); vShow("#vCancel", vCanCancel);
   vShow("#vBtn", true); $("#vBtn").disabled = false; vShow("#vDigits", true);
@@ -1045,6 +1226,11 @@ $("#reVoice").addEventListener("click", () => {
 
 showView(location.hash.slice(1));
 buildPad(); boot();
+window.attachBot = (b) => { BOT = b; setAgent($("#state").dataset.s); };
+</script>
+<script type="module">
+  import { initRobot } from "{% static 'bank/robot.js' %}";
+  window.attachBot(initRobot(document.getElementById("robot")));
 </script>
 </body>
 </html>

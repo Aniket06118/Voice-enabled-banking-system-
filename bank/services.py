@@ -11,6 +11,7 @@ Authentication rule (decided by the team):
     amount <  500  -> user just says "yes" (voice confirmation)
     amount >= 500  -> user must enter their 4-digit PIN on screen (like UPI)
 """
+import re
 import uuid
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -19,6 +20,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
+from .categories import categorize
 from .models import Account, AuditLog, Payment
 
 PIN_THRESHOLD = Decimal("500")      # below this: voice confirm; at/above: PIN
@@ -59,21 +61,49 @@ def _spent_today(account) -> Decimal:
     return total or Decimal("0")
 
 
+# Common phonetic mappings for Indic scripts to English contact names (from Aniket)
+_INDIC_NAME_MAP = {
+    # Hindi / Devanagari
+    "राहुल": "rahul", "वर्मा": "verma", "वर्र्मा": "verma", "शर्मा": "sharma",
+    "अमन": "aman", "मॉम": "mom", "माँ": "mom", "मां": "mom", "माता": "mom", "अम्मी": "mom", "मम्मी": "mom",
+    # Tamil
+    "ராகுல்": "rahul", "வர்மா": "verma", "சர்மா": "sharma", "அமன்": "aman", "அம்மா": "mom",
+    # Telugu
+    "రాహుల్": "rahul", "వర్మ": "verma", "వర్మా": "verma", "శర్మ": "sharma", "అమన్": "aman", "అమ్మ": "mom",
+    # Bengali
+    "রাহুল": "rahul", "বর্মা": "verma", "ভার্মা": "verma", "শর্মা": "sharma", "আমান": "aman", "মা": "mom",
+    # Marathi / Gujarati
+    "વર્મા": "verma", "શર્મા": "sharma", "રાહુલ": "rahul",
+}
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize input name, translating any known Indic script words into Latin equivalents."""
+    cleaned = " ".join(str(name or "").lower().split())
+    return " ".join(_INDIC_NAME_MAP.get(t, t) for t in cleaned.split())
+
+
 def resolve_contact(account: Account, name: str) -> list:
-    """Find contacts matching a spoken name. Returns a list:
+    """Find contacts matching a spoken name (English or Indian scripts).
     0 items = not found, 1 = match, 2+ = ambiguous ("which Rahul?")."""
-    wanted = " ".join(name.lower().split())
+    raw_wanted = " ".join(str(name or "").lower().split())
+    norm_wanted = _normalize_name(name)
     contacts = list(account.contacts.all())
 
-    exact = [c for c in contacts if c.name.lower() == wanted]
-    if len(exact) == 1:
-        return exact
+    for target in (norm_wanted, raw_wanted):          # 1. exact match
+        exact = [c for c in contacts if c.name.lower() == target]
+        if len(exact) == 1:
+            return exact
 
-    def word_match(c):
-        words = c.name.lower().split()
-        return wanted in c.name.lower() or all(w in words for w in wanted.split())
+    def match(c, target):                              # 2. word / sub-token match
+        if not target:
+            return False
+        c_words = c.name.lower().split()
+        t_words = target.split()
+        return (target in c.name.lower() or all(w in c_words for w in t_words)
+                or all(w in c.name.lower() for w in t_words))
 
-    return [c for c in contacts if word_match(c)]
+    return [c for c in contacts if match(c, norm_wanted) or match(c, raw_wanted)]
 
 
 # ------------------------------------------------------------- step 1: initiate
@@ -123,6 +153,7 @@ def initiate_payment(account: Account, recipient_name, amount, idempotency_key=N
             account=account, contact=contact, recipient_name=contact.name,
             upi_id=contact.upi_id, amount=amount, auth_required=auth,
             idempotency_key=idempotency_key or None,
+            category=categorize(contact.name, contact.kind),
         )
     except IntegrityError:  # two identical requests raced each other
         existing = account.payments.filter(idempotency_key=idempotency_key).first()
@@ -352,6 +383,7 @@ def get_history(account: Account, limit=20, recipient=None, days=None) -> list:
             "status": p.get_status_display(),
             "timestamp": p.created_at.isoformat(),
             "verified_with": p.auth_used or None,
+            "category": p.category,
         }
         for p in qs[: int(limit)]
     ]
@@ -437,8 +469,10 @@ NOTICE_TEXT = {
     "voice_enrolled": lambda d: "Your voice was saved",
     "voice_fallback_pin": lambda d: "You signed in with your PIN instead of your voice",
     "payment_expired": lambda d: "A payment request expired before it was confirmed",
+    "contact_added": lambda d: f"{d.get('name', 'A contact')} was added to your contacts",
+    "signed_up": lambda d: "Welcome to EchoMint! Your account is ready",
 }
-NOTICE_LEVEL = {"wrong_pin": "warn", "pin_locked": "warn", "voice_failed": "warn",
+NOTICE_LEVEL = {"contact_added": "info", "signed_up": "info", "wrong_pin": "warn", "pin_locked": "warn", "voice_failed": "warn",
                 "pin_changed": "info", "daily_limit_changed": "info"}
 
 
@@ -446,3 +480,71 @@ def notifications(acct, limit=8) -> list:
     rows = AuditLog.objects.filter(account=acct, event__in=list(NOTICE_TEXT)).order_by("-created_at")[:limit]
     return [{"text": NOTICE_TEXT[r.event](r.detail or {}), "level": NOTICE_LEVEL.get(r.event, "ok"),
              "timestamp": r.created_at.isoformat()} for r in rows]
+
+
+# ------------------------------------------------------------- sign up + contacts
+
+STARTER_BALANCE = Decimal("10000")   # demo money for new accounts in this prototype
+DEFAULT_PAYEES = [  # every new account can pay these bills from day one
+    ("Adani Electricity", "adanielectricity@billpay", "biller"),
+    ("Delhi Jal Board", "djb@billpay", "biller"),
+    ("Indraprastha Gas", "igl@billpay", "biller"),
+    ("Airtel Broadband", "airtelbroadband@billpay", "biller"),
+    ("Jio Prepaid", "jio@recharge", "recharge"),
+    ("Airtel Prepaid", "airtel@recharge", "recharge"),
+    ("Vi Prepaid", "vi@recharge", "recharge"),
+    ("EchoMint Gold", "gold@echomint", "gold"),
+]
+WEAK_PINS = {"0000", "1111", "1234", "4321", "1212", "0123", "9999", "2580"}
+
+
+def create_customer(full_name, phone, password, pin) -> dict:
+    """Open a new account (sign up). Returns {"ok", "phone", ...}."""
+    import secrets as _secrets
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    full_name = " ".join(str(full_name or "").split())
+    phone = re.sub(r"\D", "", str(phone or ""))[-10:]
+    password = str(password or "")
+    pin = str(pin or "")
+    if not (2 <= len(full_name) <= 80):
+        return _result(False, "bad_name", "Please enter your full name.")
+    if not re.fullmatch(r"[6-9]\d{9}", phone):
+        return _result(False, "bad_phone", "Please enter a 10-digit Indian mobile number.")
+    if len(password) < 6:
+        return _result(False, "bad_password", "Your password needs at least 6 characters.")
+    if not re.fullmatch(r"\d{4}", pin):
+        return _result(False, "bad_pin", "Your PIN must be exactly 4 digits.")
+    if pin in WEAK_PINS or len(set(pin)) == 1:
+        return _result(False, "weak_pin", "That PIN is too easy to guess. Please choose another.")
+    if User.objects.filter(username=phone).exists() or Account.objects.filter(phone=phone).exists():
+        return _result(False, "phone_taken", "An account with this phone number already exists. Please log in.")
+    with transaction.atomic():
+        user = User.objects.create_user(username=phone, password=password)
+        number = None
+        while number is None or Account.objects.filter(account_number=number).exists():
+            number = str(_secrets.randbelow(9 * 10**11) + 10**11)
+        acct = Account(user=user, full_name=full_name, phone=phone, account_number=number,
+                       bank_name="Lotus Bank", balance=STARTER_BALANCE)
+        acct.set_pin(pin)
+        acct.save()
+        from .models import Contact
+        for name, upi, kind in DEFAULT_PAYEES:
+            Contact.objects.create(account=acct, name=name, upi_id=upi, kind=kind)
+        _audit(acct, "signed_up")
+    return _result(True, "signed_up", f"Welcome to EchoMint, {full_name.split()[0]}!", phone=phone)
+
+
+def add_contact(acct, name, upi_id) -> dict:
+    from .models import Contact
+    name = " ".join(str(name or "").split())[:60]
+    upi_id = str(upi_id or "").strip().lower()
+    if len(name) < 2:
+        return _result(False, "bad_name", "Please enter the person's name.")
+    if not re.fullmatch(r"[a-z0-9._-]{2,64}@[a-z][a-z0-9.]{1,32}", upi_id):
+        return _result(False, "bad_upi", "Please enter a valid UPI ID, like name@okbank.")
+    if acct.contacts.filter(name__iexact=name).exists():
+        return _result(False, "contact_exists", f"You already have a contact called {name}.")
+    Contact.objects.create(account=acct, name=name, upi_id=upi_id, kind="person")
+    _audit(acct, "contact_added", name=name)
+    return _result(True, "contact_added", f"{name} has been added to your contacts.")

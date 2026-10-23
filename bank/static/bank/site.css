@@ -162,3 +162,6 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; transition-duration: .01ms !important; }
   html { scroll-behavior: auto; }
 }
+
+.pin-hint { margin: -8px 0 16px; color: var(--slate); font-size: 15px; }
+.top nav a.signup { color: var(--ink); font-weight: 700; }

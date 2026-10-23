@@ -21,6 +21,12 @@ urlpatterns = [
     path("voice/enroll/", views.voice_enroll),
     path("voice/verify/", views.voice_verify),
     path("voice/fallback/", views.voice_fallback),
+    path("voice/stt/", views.voice_stt),
+    path("voice/tts/", views.voice_tts),
+    path("signup/", views.signup),
+    path("contacts/", views.add_contact),
+    path("analysis/", views.analysis_live),
+    path("analysis/<uuid:analysis_id>/", views.analysis_saved),
     path("agent/chat/", views.agent_chat),
     path("agent/reset/", views.agent_reset),
 ]

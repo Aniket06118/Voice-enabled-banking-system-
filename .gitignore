@@ -15,3 +15,8 @@ enroll_sample.wav
 voice_profile.npy
 verify_sample.wav
 pretrained_models/
+
+env/
+.env
+db.sqlite3
+__pycache__/

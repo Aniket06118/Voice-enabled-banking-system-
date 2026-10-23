@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EchoMint</title>
+<style>
+  :root {
+    --bg: #0b1210; --panel: #121c19; --panel2: #182420; --line: #25362f;
+    --text: #e8f3ee; --muted: #8aa399; --accent: #2ee6a6; --accent-ink: #04271b;
+    --danger: #ff6b6b; --me: #1d3a31;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  button { font: inherit; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  /* ---------- login ---------- */
+  #login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px; }
+  #login .card { width: min(380px, 100%); }
+  .brand { font-weight: 700; font-size: 26px; letter-spacing: .2px; }
+  .brand span { color: var(--accent); }
+  .tag { color: var(--muted); margin: 4px 0 22px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  input, select { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+                  background: var(--panel2); color: var(--text); font: inherit; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  .primary { width: 100%; margin-top: 20px; padding: 13px; border: 0; border-radius: 12px;
+             background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 14px; }
+  .error { color: var(--danger); font-size: 14px; min-height: 20px; margin-top: 10px; }
+
+  /* ---------- app ---------- */
+  #app { max-width: 1060px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 16px; }
+  .who { color: var(--muted); font-size: 14px; text-align: right; }
+  .linkbtn { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 0; }
+  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
+  @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
+
+  .chat { display: flex; flex-direction: column; height: min(72vh, 680px); padding: 0; overflow: hidden; }
+  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 16px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.bot { background: var(--panel2); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg.me { background: var(--me); align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg.sys { align-self: center; color: var(--muted); font-size: 13px; }
+  .msg.ok { border-color: var(--accent); }
+  .typing span { display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 50%;
+                 background: var(--muted); animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; } .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+  .composer { border-top: 1px solid var(--line); padding: 12px; display: flex; gap: 10px; align-items: center; }
+  .composer input { flex: 1; }
+  .send { width: auto; margin: 0; padding: 12px 18px; }
+  .mic { width: 54px; height: 54px; flex: none; border-radius: 50%; border: 2px solid var(--accent);
+         background: transparent; color: var(--accent); font-size: 22px; }
+  .mic.live { background: var(--accent); color: var(--accent-ink); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46,230,166,.5); } 100% { box-shadow: 0 0 0 16px rgba(46,230,166,0); } }
+  #heard { min-height: 20px; padding: 0 14px 8px; color: var(--muted); font-size: 14px; font-style: italic; }
+
+  .side { display: flex; flex-direction: column; gap: 16px; }
+  .balance .label { color: var(--muted); font-size: 13px; }
+  .balance .amount { font-size: 34px; font-weight: 700; margin-top: 2px; }
+  .balance .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .opts label { margin: 0 0 6px; }
+  .tx { list-style: none; margin: 8px 0 0; padding: 0; }
+  .tx li { display: flex; justify-content: space-between; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .tx li:first-child { border-top: 0; }
+  .tx small { display: block; color: var(--muted); }
+  .tx .out { color: var(--text); font-variant-numeric: tabular-nums; }
+  .tx .bad { color: var(--danger); }
+  h3 { margin: 0; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .6px; }
+
+  /* ---------- PIN pad ---------- */
+  #pinOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: grid; place-items: center; padding: 16px; z-index: 10; }
+  #pinBox { width: min(340px, 100%); text-align: center; }
+  #pinBox h2 { margin: 0 0 4px; font-size: 20px; }
+  #pinBox p { margin: 0; color: var(--muted); }
+  .dots { display: flex; justify-content: center; gap: 14px; margin: 22px 0 8px; }
+  .dots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--muted); }
+  .dots i.on { background: var(--accent); border-color: var(--accent); }
+  .shake { animation: shake .35s; }
+  @keyframes shake { 20% { transform: translateX(-8px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-6px); } 80% { transform: translateX(6px); } }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .pad button { padding: 16px 0; font-size: 22px; border-radius: 14px; border: 1px solid var(--line);
+                background: var(--panel2); color: var(--text); }
+  .pad button:active { background: var(--line); }
+  .pad .quiet { font-size: 15px; color: var(--muted); }
+  #pinMsg { min-height: 22px; margin-top: 10px; color: var(--danger); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="hidden">
+  <form class="card" id="loginForm">
+    <div class="brand">Echo<span>Mint</span></div>
+    <div class="tag">Bank by talking.</div>
+    <label for="phone">Phone number</label>
+    <input id="phone" inputmode="numeric" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button class="primary" type="submit">Log in</button>
+    <div class="error" id="loginError"></div>
+    <div class="hint">Demo account: 9876543210 / demo1234</div>
+  </form>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+  <header>
+    <div class="brand">Echo<span>Mint</span></div>
+    <div class="who"><span id="whoName"></span><br><button class="linkbtn" id="logoutBtn">Log out</button></div>
+  </header>
+
+  <div class="layout">
+    <section class="card chat">
+      <div id="log" aria-live="polite"></div>
+      <div id="heard"></div>
+      <form class="composer" id="composer">
+        <button type="button" class="mic" id="mic" aria-label="Talk to EchoMint">🎤</button>
+        <input id="text" placeholder="Tap the mic and speak, or type here…" autocomplete="off">
+        <button class="primary send" type="submit">Send</button>
+      </form>
+    </section>
+
+    <aside class="side">
+      <div class="card balance">
+        <div class="label">Available balance</div>
+        <div class="amount" id="balance">–</div>
+        <div class="meta" id="acctMeta"></div>
+      </div>
+      <div class="card">
+        <div class="opts">
+          <div>
+            <label for="lang">Language</label>
+            <select id="lang">
+              <option value="en-IN">English</option>
+              <option value="hi-IN">हिन्दी</option>
+            </select>
+          </div>
+          <div>
+            <label for="speakOn">Spoken replies</label>
+            <select id="speakOn"><option value="1">On</option><option value="0">Off</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Recent payments</h3>
+        <ul class="tx" id="tx"></ul>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- PIN PAD -->
+<div id="pinOverlay" class="hidden">
+  <div class="card" id="pinBox" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+    <h2 id="pinTitle">Enter your PIN</h2>
+    <p id="pinSub"></p>
+    <div class="dots" id="dots"><i></i><i></i><i></i><i></i></div>
+    <div id="pinMsg"></div>
+    <div class="pad" id="pad"></div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const csrf = () => (document.cookie.split("; ").find(r => r.startsWith("csrftoken=")) || "").split("=")[1] || "";
+
+async function api(url, method = "GET", body) {
+  const res = await fetch(url, {
+    method, credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = {}; try { data = await res.json(); } catch (e) {}
+  return { status: res.status, data };
+}
+const rupees = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+
+/* ---------------- login / session ---------------- */
+async function boot() {
+  const { status, data } = await api("/api/me/");
+  if (status === 200) showApp(data); else { $("#login").classList.remove("hidden"); $("#app").classList.add("hidden"); }
+}
+function showApp(me) {
+  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
+  $("#whoName").textContent = me.name;
+  $("#acctMeta").textContent = `${me.bank_name} · A/c ${me.account_number}`;
+  setBalance(me.balance);
+  if (!$("#log").children.length) {
+    addMsg("bot", `Hi ${me.name.split(" ")[0]}! Tap the mic and tell me what to do — for example “send 300 to Aman” or “what's my balance?”`);
+  }
+  loadHistory();
+}
+function setBalance(b) { $("#balance").textContent = rupees(b); }
+
+$("#loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); $("#loginError").textContent = "";
+  const { status, data } = await api("/api/login/", "POST",
+    { phone: $("#phone").value.trim(), password: $("#password").value });
+  if (status === 200) { $("#password").value = ""; showApp(data.user); }
+  else $("#loginError").textContent = data.message || "Could not log in.";
+});
+$("#logoutBtn").addEventListener("click", async () => {
+  await api("/api/agent/reset/", "POST"); await api("/api/logout/", "POST");
+  $("#log").innerHTML = ""; stopSpeaking(); boot();
+});
+
+/* ---------------- chat ---------------- */
+function addMsg(who, text, extra = "") {
+  const d = document.createElement("div");
+  d.className = `msg ${who} ${extra}`.trim(); d.textContent = text;
+  $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight; return d;
+}
+function typing() {
+  const d = document.createElement("div"); d.className = "msg bot typing";
+  d.innerHTML = "<span></span><span></span><span></span>";
+  $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight; return d;
+}
+
+let busy = false;
+async function send(text) {
+  text = (text || "").trim(); if (!text || busy) return;
+  busy = true; stopSpeaking(); addMsg("me", text);
+  const t = typing();
+  const { status, data } = await api("/api/agent/chat/", "POST", { message: text });
+  t.remove(); busy = false;
+  if (status === 401) { boot(); return; }
+  const reply = data.reply || data.message || "Sorry, something went wrong.";
+  addMsg("bot", reply);
+  if (data.debug_error) addMsg("sys", "debug: " + data.debug_error);
+  if (data.balance !== undefined) setBalance(data.balance);
+  loadHistory();
+
+  const p = data.pending_payment;
+  if (p && p.needs_pin) {
+    speak(reply, () => openPin(p));
+    openPin(p);                       // show the pad right away; don't wait for speech
+  } else if (p) {
+    speak(reply, () => startListening());   // waiting for a spoken "yes" -> listen again
+  } else {
+    speak(reply);
+  }
+}
+$("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#text").value; $("#text").value = ""; send(v); });
+
+async function loadHistory() {
+  const { status, data } = await api("/api/history/?limit=6");
+  if (status !== 200) return;
+  const ul = $("#tx"); ul.innerHTML = "";
+  if (!data.payments.length) { ul.innerHTML = '<li><small>No payments yet</small></li>'; return; }
+  for (const p of data.payments) {
+    const li = document.createElement("li");
+    const left = document.createElement("div");
+    left.textContent = p.recipient;
+    const sm = document.createElement("small");
+    sm.textContent = new Date(p.timestamp).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    left.appendChild(sm);
+    const right = document.createElement("div");
+    right.className = "out" + (p.status === "Success" ? "" : " bad");
+    right.textContent = (p.status === "Success" ? "−" : "✕ ") + rupees(p.amount);
+    li.append(left, right); ul.appendChild(li);
+  }
+}
+
+/* ---------------- speech: listening ---------------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false, finalText = "";
+
+function setListening(on) { listening = on; $("#mic").classList.toggle("live", on); if (!on) $("#heard").textContent = ""; }
+
+function startListening() {
+  if (!SR) { addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
+  if (listening || busy || !$("#pinOverlay").classList.contains("hidden")) return;
+  stopSpeaking();
+  finalText = "";
+  rec = new SR(); rec.lang = $("#lang").value; rec.interimResults = true; rec.continuous = false;
+  rec.onresult = (e) => {
+    let t = ""; for (const r of e.results) t += r[0].transcript;
+    $("#heard").textContent = "“" + t + "”";
+    if (e.results[e.results.length - 1].isFinal) finalText = t;
+  };
+  rec.onerror = (e) => {
+    setListening(false);
+    if (e.error === "not-allowed") addMsg("sys", "Please allow microphone access in your browser.");
+    else if (e.error === "network") addMsg("sys", "Speech recognition needs internet. You can type instead.");
+  };
+  rec.onend = () => { setListening(false); if (finalText) send(finalText); };
+  try { rec.start(); setListening(true); } catch (e) { setListening(false); }
+}
+$("#mic").addEventListener("click", () => { if (listening) rec.stop(); else startListening(); });
+
+/* ---------------- speech: speaking ---------------- */
+function speak(text, onend) {
+  const done = () => { if (onend) onend(); };
+  if ($("#speakOn").value !== "1" || !("speechSynthesis" in window)) { done(); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.replace(/₹\s?/g, "rupees "));
+  u.lang = $("#lang").value; u.rate = 1.0;
+  u.onend = done; u.onerror = done;
+  speechSynthesis.speak(u);
+}
+function stopSpeaking() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+
+/* ---------------- PIN pad ---------------- */
+let pin = "", pending = null, pinBusy = false;
+
+function buildPad() {
+  const keys = ["1","2","3","4","5","6","7","8","9","Cancel","0","⌫"];
+  const pad = $("#pad");
+  for (const k of keys) {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = k;
+    if (k === "Cancel" || k === "⌫") b.classList.add("quiet");
+    b.addEventListener("click", () => pressKey(k)); pad.appendChild(b);
+  }
+}
+function renderDots() { [...$("#dots").children].forEach((d, i) => d.classList.toggle("on", i < pin.length)); }
+
+function openPin(p) {
+  if (!$("#pinOverlay").classList.contains("hidden") && pending && pending.id === p.id) return;
+  pending = p; pin = ""; renderDots(); $("#pinMsg").textContent = "";
+  $("#pinSub").textContent = `Pay ${rupees(p.amount)} to ${p.recipient}`;
+  $("#pinOverlay").classList.remove("hidden");
+}
+function closePin() { $("#pinOverlay").classList.add("hidden"); pin = ""; pending = null; }
+
+async function pressKey(k) {
+  if (pinBusy || !pending) return;
+  if (k === "Cancel") {
+    const id = pending.id; closePin();
+    await api(`/api/payments/${id}/cancel/`, "POST");
+    addMsg("bot", "Okay, I've cancelled that payment."); speak("Okay, I've cancelled that payment."); return;
+  }
+  if (k === "⌫") pin = pin.slice(0, -1);
+  else if (pin.length < 4) pin += k;
+  renderDots();
+  if (pin.length === 4) await submitPin();
+}
+async function submitPin() {
+  pinBusy = true;
+  const { data } = await api(`/api/payments/${pending.id}/confirm/`, "POST", { pin });
+  pinBusy = false;
+  if (data.ok) {
+    closePin(); addMsg("bot", data.message, "ok"); speak(data.message);
+    if (data.new_balance !== undefined) setBalance(data.new_balance); loadHistory();
+  } else if (data.code === "wrong_pin") {
+    $("#pinMsg").textContent = data.message; pin = ""; renderDots();
+    $("#dots").classList.remove("shake"); void $("#dots").offsetWidth; $("#dots").classList.add("shake");
+  } else {
+    closePin(); addMsg("bot", data.message || "That payment didn't go through."); speak(data.message || "");
+    loadHistory();
+  }
+}
+document.addEventListener("keydown", (e) => {
+  if ($("#pinOverlay").classList.contains("hidden")) return;
+  if (/^[0-9]$/.test(e.key)) pressKey(e.key);
+  else if (e.key === "Backspace") pressKey("⌫");
+  else if (e.key === "Escape") pressKey("Cancel");
+});
+
+buildPad(); boot();
+</script>
+</body>
+</html>

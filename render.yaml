@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: voice-banking
+    runtime: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application"
+    envVars:
+      - key: DATABASE_URL
+        sync: false                # set manually in Render dashboard
+      - key: DJANGO_SECRET_KEY
+        generateValue: true        # Render generates a random secret
+      - key: DJANGO_DEBUG
+        value: "0"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: PYTHON_VERSION
+        value: "3.13.0"
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false

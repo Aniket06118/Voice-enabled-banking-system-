@@ -12,3 +12,6 @@ sarvamai>=0.1.37
 torch>=2.2
 torchaudio>=2.2
 speechbrain>=1.0
+# Production deployment
+gunicorn>=22.0
+whitenoise[brotli]>=6.7

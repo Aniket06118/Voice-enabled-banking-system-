@@ -28,9 +28,11 @@ FAST_LANGS = {"en-IN", "hi-IN"}
 DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
 YES = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "go ahead", "do it",
-       "send it", "yes send", "yes please", "yes confirm", "please send", "haan", "han", "ha", "haa",
-       "haanji", "haan ji", "ji", "ji haan", "theek hai", "thik hai", "kar do", "bhej do", "haan bhej do",
-       "हाँ", "हां", "हा", "जी", "जी हाँ", "जी हां", "ठीक है", "भेज दो", "कर दो", "हाँ भेज दो", "हां भेज दो"}
+       "send it", "yes send", "yes please", "yes confirm", "please send", "haan", "han", "haa",
+       "haanji", "haan ji", "ji haan", "theek hai", "thik hai", "kar do", "bhej do", "haan bhej do",
+       "हाँ", "हां", "जी हाँ", "जी हां", "ठीक है", "भेज दो", "कर दो", "हाँ भेज दो", "हां भेज दो"}
+# Not here on purpose: a lone "ji" / "ha" / "जी" is how people say "I'm listening",
+# not "send the money".
 NO = {"no", "nope", "cancel", "cancel it", "stop", "dont", "don't", "do not", "no thanks", "dont send",
       "don't send", "nahi", "nahin", "na", "mat karo", "mat bhejo", "ruko", "cancel karo", "rehne do",
       "नहीं", "नही", "ना", "रद्द करो", "मत भेजो", "रुको", "कैंसल", "कैंसल करो", "रहने दो"}

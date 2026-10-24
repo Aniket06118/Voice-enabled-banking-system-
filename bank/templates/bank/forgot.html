@@ -1,0 +1,111 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset your EchoMint password</title>
+<link rel="stylesheet" href="{% static 'bank/fonts/fonts.css' %}">
+<link rel="stylesheet" href="{% static 'bank/site.css' %}">
+</head>
+<body>
+<main class="login-page">
+  <div class="paths" id="paths" aria-hidden="true"></div>
+
+  <div class="login-inner">
+    <h1 class="wordmark" data-split>EchoMint</h1>
+    <p class="lede">Forgot your password? Use your PIN to set a new one.</p>
+
+    <form class="login-card" id="resetForm" novalidate>
+      <label for="phone">Your registered mobile number</label>
+      <input id="phone" name="phone" inputmode="tel" autocomplete="username" placeholder="10-digit mobile number" required>
+      <label for="pin">Your 4-digit PIN</label>
+      <input id="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" required>
+      <p class="pin-hint">The PIN you type for payments of ₹500 or more. 3 wrong tries locks it for 15 minutes.</p>
+      <label for="pw">New password</label>
+      <input id="pw" type="password" autocomplete="new-password" minlength="6" required>
+      <label for="pw2">New password again</label>
+      <input id="pw2" type="password" autocomplete="new-password" minlength="6" required>
+      <span class="ring"><button class="btn btn-ink" type="submit" id="save"><span class="dot" aria-hidden="true"></span>Change my password</button></span>
+      <p class="login-error" id="err" role="alert"></p>
+      <div class="login-foot"><a href="/login/">Back to log in</a><a href="/signup/">Create an account</a></div>
+    </form>
+  </div>
+</main>
+
+<script>
+  document.querySelectorAll("[data-split]").forEach(el => {
+    const word = el.textContent; el.setAttribute("aria-label", word); el.textContent = "";
+    [...word].forEach((c, i) => { const s = document.createElement("span"); s.className = "ch"; s.style.setProperty("--i", i); s.textContent = c; s.setAttribute("aria-hidden", "true"); el.appendChild(s); });
+  });
+
+  // Same calm background as the log-in page (one canvas, ~30 fps).
+  (function paths() {
+    const host = document.getElementById("paths");
+    const cv = document.createElement("canvas"); host.appendChild(cv);
+    const ctx = cv.getContext("2d");
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const NS = "http://www.w3.org/2000/svg", probe = document.createElementNS(NS, "svg");
+    probe.style.cssText = "position:absolute;width:0;height:0;visibility:hidden"; document.body.appendChild(probe);
+    const lines = [];
+    for (const [position, rgb, mul] of [[1, "22,24,29", 0.85], [-1, "47,86,232", 0.55]]) {
+      for (let i = 0; i < 36; i++) {
+        const a = 380 - i * 5 * position, b = 189 + i * 6, c = 312 - i * 5 * position, d = 216 - i * 6,
+              e = 152 - i * 5 * position, f = 343 - i * 6, g = 616 - i * 5 * position, h = 470 - i * 6,
+              k = 684 - i * 5 * position, l = 875 - i * 6;
+        const dstr = `M-${a} -${b}C-${a} -${b} -${c} ${d} ${e} ${f}C${g} ${h} ${k} ${l} ${k} ${l}`;
+        const el = document.createElementNS(NS, "path"); el.setAttribute("d", dstr); probe.appendChild(el);
+        lines.push({ path: new Path2D(dstr), len: el.getTotalLength(), width: 0.5 + i * 0.03,
+                     alpha: mul * (0.1 + i * 0.03), color: `rgb(${rgb})`,
+                     period: (20 + Math.random() * 10) * 1000, phase: Math.random() });
+      }
+    }
+    probe.remove();
+    let W = 0, H = 0, dpr = 1, scale = 1, ox = 0, oy = 0;
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 1.5); W = innerWidth; H = innerHeight;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      cv.style.width = W + "px"; cv.style.height = H + "px";
+      scale = Math.max(W / 696, H / 316); ox = (W - 696 * scale) / 2; oy = (H - 316 * scale) / 2;
+      draw(performance.now());
+    }
+    function draw(now) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+      for (const ln of lines) {
+        const p = still ? 0.25 : ((now / ln.period) + ln.phase) % 1;
+        ctx.globalAlpha = ln.alpha * (0.3 + 0.3 * Math.sin(p * Math.PI));
+        ctx.strokeStyle = ln.color; ctx.lineWidth = ln.width;
+        ctx.setLineDash([ln.len, ln.len]); ctx.lineDashOffset = -2 * ln.len * p;
+        ctx.stroke(ln.path);
+      }
+    }
+    let last = 0;
+    function loop(now) { requestAnimationFrame(loop); if (document.hidden || now - last < 33) return; last = now; draw(now); }
+    addEventListener("resize", resize); resize();
+    if (!still) requestAnimationFrame(loop);
+  })();
+
+  const $ = (id) => document.getElementById(id);
+  const csrf = () => (document.cookie.split("; ").find(r => r.startsWith("csrftoken=")) || "").split("=")[1] || "";
+  const phone10 = (v) => v.replace(/\D/g, "").slice(-10);
+  $("resetForm").addEventListener("submit", async (e) => {
+    e.preventDefault(); $("err").textContent = "";
+    const phone = phone10($("phone").value), pin = $("pin").value, pw = $("pw").value;
+    if (!/^[6-9]\d{9}$/.test(phone)) { $("err").textContent = "Please enter your 10-digit mobile number."; return; }
+    if (!/^\d{4}$/.test(pin)) { $("err").textContent = "Enter your 4-digit PIN."; return; }
+    if (pw.length < 6) { $("err").textContent = "Your new password needs at least 6 characters."; return; }
+    if (pw !== $("pw2").value) { $("err").textContent = "The two passwords don't match."; return; }
+    $("save").disabled = true;
+    try {
+      const res = await fetch("/api/password/reset/", { method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() }, body: JSON.stringify({ phone, pin, password: pw }) });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) { location.href = "/login/?reset=1&phone=" + encodeURIComponent(data.phone || phone); return; }
+      $("err").textContent = data.message || "That didn't work.";
+      $("pin").value = "";
+    } catch (x) { $("err").textContent = "Can't reach EchoMint. Check the internet connection and try again."; }
+    $("save").disabled = false;
+  });
+</script>
+</body>
+</html>

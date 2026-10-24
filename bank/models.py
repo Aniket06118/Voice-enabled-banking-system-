@@ -31,6 +31,9 @@ class Account(models.Model):
     pin_failed_attempts = models.PositiveSmallIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)
 
+    # Virtual debit card: frozen blocks shop/service payments until turned back on.
+    card_frozen = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -112,6 +115,8 @@ class Payment(models.Model):
     category = models.CharField(max_length=20, choices=[(c, c.title()) for c in CATEGORIES],
                                 default="other", db_index=True)
     failure_reason = models.CharField(max_length=200, blank=True)
+    # Bill consumer number or the mobile number being recharged (typed by the customer).
+    reference = models.CharField(max_length=40, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 

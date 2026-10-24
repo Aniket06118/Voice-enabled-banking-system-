@@ -29,6 +29,7 @@ SAMPLE_RATE = 16000        # the voice model expects 16 kHz mono
 MIN_SECONDS = 1.5
 MAX_SECONDS = 12.0
 MIN_RMS = 0.004            # below this the recording is basically silence
+MIN_SNR_DB = 10.5          # speech must stand out from the background (noise alone measures ~9; a loud hall ~12-18)
 
 DIGITS_PROMPT = (
     "This audio is a person reading out a short sequence of digits (it may be in "
@@ -68,6 +69,19 @@ def decode_wav(data: bytes) -> np.ndarray:
     return samples
 
 
+def encode_wav(samples: np.ndarray) -> bytes:
+    """float32 mono samples at 16 kHz -> 16-bit PCM WAV bytes (reverse of decode_wav)."""
+    clipped = np.clip(samples, -1.0, 1.0)
+    pcm = (clipped * 32767.0).astype("<i2")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
 def check_quality(samples: np.ndarray) -> None:
     seconds = len(samples) / SAMPLE_RATE
     if seconds < MIN_SECONDS:
@@ -76,11 +90,32 @@ def check_quality(samples: np.ndarray) -> None:
         raise VoiceError("audio_too_long", "That recording was too long. Please try again.")
     if float(np.sqrt(np.mean(samples ** 2))) < MIN_RMS:
         raise VoiceError("audio_silent", "I couldn't hear anything. Check your microphone and try again.")
+    if speech_to_noise_db(samples) < MIN_SNR_DB:
+        # A clip that is mostly background noise gives a "voiceprint" of the room and the
+        # microphone, not of the person - and then EVERYONE in that room looks alike.
+        raise VoiceError("audio_noisy", "There's too much background noise. Move somewhere quieter, "
+                                        "or hold the mic closer, and read the number again.")
+
+
+def speech_to_noise_db(samples: np.ndarray) -> float:
+    """How far the loud (speech) parts stand above the quiet (background) parts, in dB.
+    Calibrated on real speech: clean ~40, noisy room ~18-23, background noise alone ~9."""
+    frame = SAMPLE_RATE // 50
+    n = len(samples) // frame
+    if n < 10:
+        return 99.0
+    rms = np.sqrt(np.mean(samples[: n * frame].reshape(n, frame) ** 2, axis=1)) + 1e-9
+    return float(20 * np.log10(np.percentile(rms, 90) / np.percentile(rms, 10)))
 
 
 MIN_SPEECH_SECONDS = 1.0     # after trimming silence, at least this much real speech
-THRESHOLD_FLOOR = 0.32       # never accept a voice scoring below this, however noisy enrollment was
-DEFAULT_THRESHOLD = 0.40
+# Measured on real recordings through this exact pipeline (trim -> ECAPA -> cosine), with a
+# shared laptop mic, room echo and background noise added: the SAME person scored 0.42-0.66
+# (5th-95th percentile), a DIFFERENT person at most 0.35. So nothing under 0.40 is ever accepted.
+THRESHOLD_FLOOR = 0.40
+DEFAULT_THRESHOLD = 0.42
+OTHER_VOICE_MARGIN = 0.05    # must match the owner clearly better than ANY other enrolled voice
+SAME_VOICE_ELSEWHERE = 0.55  # a new voiceprint this close to another account's is the same person
 
 
 def prepare(samples: np.ndarray) -> np.ndarray:
@@ -130,7 +165,20 @@ def personal_threshold(embeddings, cap: float) -> float:
     gets a stricter line than someone on a noisy laptop mic at 0.5. Always between
     THRESHOLD_FLOOR and `cap`."""
     typical = float(np.mean(genuine_scores(embeddings)))
-    return round(min(max(typical - 0.25, THRESHOLD_FLOOR), max(cap, THRESHOLD_FLOOR)), 3)
+    return round(min(max(typical - 0.20, THRESHOLD_FLOOR), max(cap, THRESHOLD_FLOOR)), 3)
+
+
+def best_other_match(emb, account_id, limit: int = 500) -> float:
+    """Highest similarity between this clip and any OTHER account's voiceprint."""
+    from .models import VoiceProfile
+    best = 0.0
+    for other in VoiceProfile.objects.exclude(account_id=account_id).order_by("-updated_at") \
+            .values_list("embedding", flat=True)[:limit]:
+        try:
+            best = max(best, cosine(other, emb))
+        except (ValueError, TypeError):          # a voiceprint saved by different code / size
+            continue
+    return best
 
 
 def blend(old, new, weight: int) -> list:
@@ -142,9 +190,21 @@ def blend(old, new, weight: int) -> list:
     return (m / np.linalg.norm(m)).tolist()
 
 
+def edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance: how many digits were swapped, missed or added."""
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        cur = [i]
+        for j, y in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x != y)))
+        prev = cur
+    return prev[-1]
+
+
 def digits_close(spoken: str, expected: str) -> bool:
-    """Exact match, or exactly one wrong digit (speech-to-text slips happen)."""
-    return len(spoken) == len(expected) and sum(x != y for x, y in zip(spoken, expected)) <= 1
+    """Exact, or ONE slip: a misheard, missed or extra digit (speech-to-text slips happen).
+    Only forgiven when the voice itself is clearly the owner (see views.voice_verify)."""
+    return bool(spoken) and len(spoken) >= len(expected) - 1 and edit_distance(spoken, expected) <= 1
 
 
 def mean_embedding(embeddings) -> list:
@@ -222,11 +282,49 @@ def only_digits(text: str) -> str:
     return "".join(str(unicodedata.digit(c)) for c in (text or "") if c.isdigit())
 
 
+# Spoken number words -> digits, so "four seven", "char saat", "चार सात" and
+# "double five" all count. Speech-to-text often writes words instead of numerals.
+DIGIT_WORDS = {
+    "zero": "0", "oh": "0", "o": "0", "shunya": "0", "shoonya": "0", "sunya": "0", "शून्य": "0", "जीरो": "0",
+    "one": "1", "won": "1", "ek": "1", "एक": "1", "वन": "1",
+    "two": "2", "to": "2", "too": "2", "do": "2", "दो": "2", "टू": "2",
+    "three": "3", "tree": "3", "teen": "3", "tin": "3", "तीन": "3", "थ्री": "3",
+    "four": "4", "for": "4", "char": "4", "chaar": "4", "चार": "4", "फोर": "4",
+    "five": "5", "paanch": "5", "panch": "5", "paach": "5", "पांच": "5", "पाँच": "5", "फाइव": "5",
+    "six": "6", "chhe": "6", "che": "6", "chhah": "6", "chah": "6", "chheh": "6", "छह": "6", "छः": "6", "छे": "6", "सिक्स": "6",
+    "seven": "7", "saat": "7", "sat": "7", "सात": "7", "सेवन": "7",
+    "eight": "8", "ate": "8", "aath": "8", "aat": "8", "आठ": "8", "एट": "8",
+    "nine": "9", "nau": "9", "nao": "9", "नौ": "9", "नाइन": "9",
+}
+REPEAT_WORDS = {"double": 2, "triple": 3, "डबल": 2, "ट्रिपल": 3}
+
+
+def words_to_digits(text: str) -> str:
+    """Turn a transcript into the digit string it contains (numerals and number words)."""
+    out, repeat = [], 1
+    for tok in re.findall(r"[^\s,.;:!?।\-]+", str(text or "").lower()):
+        if tok in REPEAT_WORDS:
+            repeat = REPEAT_WORDS[tok]
+            continue
+        if any(c.isdigit() for c in tok):
+            got = only_digits(tok)
+        else:
+            got = DIGIT_WORDS.get(tok, "")
+        if got:
+            out.append(got[0] * repeat + got[1:])
+        repeat = 1
+    return "".join(out)
+
+
 def stt_models() -> list:
     """Main model first, then a backup (Gemini sometimes answers 503 'high demand')."""
-    main = os.getenv("VOICE_STT_MODEL", "gemini-2.5-flash")
-    backup = os.getenv("VOICE_STT_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+    main = os.getenv("VOICE_STT_MODEL", "gemini-3.1-flash-lite")
+    backup = os.getenv("VOICE_STT_FALLBACK_MODEL", "gemini-3.5-flash-lite")
     return [main] + ([backup] if backup and backup != main else [])
+
+
+STT_UNAVAILABLE = ("I couldn't check the spoken digits right now. "
+                   "You can use your PIN instead, or try again in a moment.")
 
 
 def transcribe_digits(wav_bytes: bytes) -> str:
@@ -235,18 +333,78 @@ def transcribe_digits(wav_bytes: bytes) -> str:
     try:
         from google import genai
         from google.genai import types
-        client = genai.Client(http_options=types.HttpOptions(timeout=12000))  # 12 s per try
+        client = genai.Client(http_options=types.HttpOptions(timeout=10000))  # 10 s per try
         part = types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav")
         for model in stt_models():
             try:
                 resp = client.models.generate_content(model=model, contents=[part, DIGITS_PROMPT])
-                return only_digits(resp.text or "")
+                text = resp.text or ""
+                return only_digits(text) or words_to_digits(text)
             except Exception as exc:  # noqa: BLE001  (503 / timeout -> try the backup model)
                 last = exc
                 log.warning("Digit transcription failed with %s: %s", model, exc)
     except Exception as exc:  # noqa: BLE001
         last = exc
     log.error("Digit transcription failed: %s", last)
-    raise VoiceError("stt_unavailable",
-                     "I couldn't check the spoken digits right now. "
-                     "You can use your PIN instead, or try again in a moment.") from last
+    raise VoiceError("stt_unavailable", STT_UNAVAILABLE) from last
+
+
+def transcribe_digits_sarvam(wav_bytes: bytes) -> str:
+    """Same job with Sarvam's Indian-language speech-to-text (usually ~1 s, good with
+    Indian accents and Hindi number words)."""
+    try:
+        from sarvamai import SarvamAI
+        client = SarvamAI(api_subscription_key=os.environ["SARVAM_API_KEY"])
+        resp = client.speech_to_text.transcribe(
+            file=("digits.wav", wav_bytes, "audio/wav"), model="saaras:v4", mode="transcribe")
+        return words_to_digits(resp.transcript or "")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Sarvam digit transcription failed: %s", exc)
+        raise VoiceError("stt_unavailable", STT_UNAVAILABLE) from exc
+
+
+def stt_engines() -> list:
+    """Which speech-to-text services check the digits. Both run AT THE SAME TIME;
+    the first one that hears the right digits wins (faster AND fewer mishearings)."""
+    wanted = getattr(settings, "VOICE_STT_ENGINES", ["sarvam", "gemini"])
+    engines = []
+    for name in wanted:
+        if name == "sarvam" and os.getenv("SARVAM_API_KEY"):
+            engines.append(transcribe_digits_sarvam)
+        elif name == "gemini":
+            engines.append(transcribe_digits)
+    return engines or [transcribe_digits]
+
+
+_stt_pool = None
+
+
+def heard_digits(wav_bytes: bytes, expected: str, timeout: float = 22.0) -> str:
+    """Run every engine in parallel. Returns as soon as one hears `expected`
+    exactly; otherwise the closest thing any engine heard. Raises stt_unavailable
+    only if every engine failed."""
+    global _stt_pool
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutTimeout
+    if _stt_pool is None:
+        _stt_pool = ThreadPoolExecutor(max_workers=6)
+    engines = stt_engines()
+    if len(engines) == 1:
+        return engines[0](wav_bytes)
+    futures = [_stt_pool.submit(fn, wav_bytes) for fn in engines]
+    best, last_err = None, None
+    try:
+        for fut in as_completed(futures, timeout=timeout):
+            try:
+                got = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                continue
+            if got == expected:
+                return got
+            if best is None or edit_distance(got, expected) < edit_distance(best, expected):
+                best = got
+    except FutTimeout:
+        log.warning("Digit transcription: some engines were too slow")
+    if best is None:
+        raise VoiceError("stt_unavailable", STT_UNAVAILABLE) from last_err
+    return best

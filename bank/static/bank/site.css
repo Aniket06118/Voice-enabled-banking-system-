@@ -165,3 +165,10 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
 
 .pin-hint { margin: -8px 0 16px; color: var(--slate); font-size: 15px; }
 .top nav a.signup { color: var(--ink); font-weight: 700; }
+
+/* forgot password */
+.forgot { display: inline-block; margin: -6px 0 14px; font-size: 16px; color: var(--ink); text-underline-offset: 4px; }
+.forgot:hover { color: var(--signal); }
+.login-ok { margin: 0 0 14px; color: #1b7a3d; font-weight: 700; font-size: 17px; }
+.login-ok:empty { display: none; }
+.hidden { display: none !important; }

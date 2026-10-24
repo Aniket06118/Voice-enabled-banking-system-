@@ -23,6 +23,7 @@ from bank import views as bank_views
 urlpatterns = [
     path("", bank_views.landing),
     path("login/", bank_views.login_page),
+    path("forgot-password/", bank_views.forgot_page),
     path("app/", bank_views.index),
     path("signup/", bank_views.signup_page),
     path("analysis/", bank_views.analysis_page),

@@ -1,7 +1,20 @@
-﻿env/
+# secrets
+.env
+# virtual environments (never commit these: tens of thousands of files)
+env/
 venv/
+.venv/
+# Python / Django
 __pycache__/
 *.pyc
-.env
 db.sqlite3
+staticfiles/
+# voice model downloads and recordings
 pretrained_models/
+voice_profile.npy
+*.wav
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

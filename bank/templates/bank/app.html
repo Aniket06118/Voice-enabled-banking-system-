@@ -229,11 +229,22 @@
   #voiceBox p { margin: 0; color: var(--muted); font-size: 15px; }
   .vstep { color: var(--accent); font-size: 12px; letter-spacing: .8px; text-transform: uppercase; font-weight: 700; }
   .vdigits { font-size: clamp(28px, 8vw, 40px); white-space: nowrap; font-weight: 700; letter-spacing: 2px; margin: 22px 0 14px; font-variant-numeric: tabular-nums; }
-  .vbar { height: 6px; border-radius: 6px; background: var(--panel2); overflow: hidden; margin: 0 0 6px; }
-  .vbar i { display: block; height: 100%; width: 0; background: var(--accent); }
+  .vdigits.fresh { animation: vfresh .5s ease-out; }
+  @keyframes vfresh { from { transform: scale(.92); opacity: .2; } to { transform: none; opacity: 1; } }
+  .vtime { height: 8px; border-radius: 8px; background: var(--panel2); overflow: hidden; margin: 0 0 12px; }
+  .vtime i { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: left; transition: background .3s; }
+  .vtime i.low { background: var(--danger); }
+  .vlive { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 28px; font-size: 15px; color: var(--muted); }
+  .vdot { width: 14px; height: 14px; border-radius: 50%; background: var(--panel2); flex: none; transition: transform .08s, background .2s; }
+  .vdot.on { background: var(--accent); }
+  .vdot.busy { background: var(--muted); animation: vpulse 1s infinite; }
+  @keyframes vpulse { 50% { opacity: .35; } }
   #vBtn { margin-top: 14px; }
+  .ctConfirm { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 0; }
+  .ctBtns { display: flex; gap: 8px; }
+  .ctBtns button { margin: 0; width: auto; padding: 10px 18px; }
   #vBtn:disabled { opacity: .55; cursor: default; }
-  #vMsg { min-height: 44px; margin-top: 12px; font-size: 14px; color: var(--muted); }
+  #vMsg { min-height: 44px; margin-top: 12px; font-size: 15px; color: var(--muted); white-space: pre-line; }
   #vMsg.bad { color: var(--danger); } #vMsg.good { color: var(--accent); }
   #vPinBox { margin-top: 14px; display: grid; gap: 10px; justify-items: center; }
   #vPin { width: 160px; text-align: center; font-size: 22px; letter-spacing: 8px; }
@@ -247,7 +258,7 @@
   <aside class="side" aria-label="Menu">
     <a class="logo" href="/" title="EchoMint home"><span class="mk" aria-hidden="true"><i style="height:12px"></i><i style="height:22px"></i><i style="height:15px"></i></span><span><b>EchoMint</b><small>A hands-free bank</small></span></a>
     <nav class="nav" id="nav"></nav>
-    <div class="who"><span class="avatar" id="avatar">A</span><div><div class="nm" id="whoName"></div><button class="linkbtn" id="logoutBtn">Log out</button></div></div>
+    <div class="who"><span class="avatar" id="avatar">A</span><div><div class="nm" id="whoName"></div><button class="linkbtn" id="lockBtn" title="Ask for the voice check again">Lock</button> · <button class="linkbtn" id="logoutBtn">Log out</button></div></div>
   </aside>
 
   <main id="main">
@@ -272,28 +283,23 @@
         <div class="card"><h2 style="margin-bottom:16px">Savings account</h2><dl class="dl" id="acctDetails"></dl></div>
         <div class="card"><h2 style="margin-bottom:16px">Today's spending</h2><div id="todayBox"></div><p style="color:var(--slate);margin:14px 0 0">The daily limit stops anyone from emptying your account in one day. Change it in Settings.</p></div>
       </div>
-      <div class="card">
-        <div class="opts">
-          <div>
-            <label for="lang">Language</label>
-            <select id="lang">
-              <option value="en-IN">English (India)</option>
-              <option value="hi-IN">Hindi</option>
-              <option value="ta-IN">Tamil</option>
-              <option value="te-IN">Telugu</option>
-              <option value="bn-IN">Bengali</option>
-              <option value="mr-IN">Marathi</option>
-              <option value="gu-IN">Gujarati</option>
-              <option value="kn-IN">Kannada</option>
-              <option value="ml-IN">Malayalam</option>
-              <option value="pa-IN">Punjabi</option>
-              <option value="od-IN">Odia</option>
-            </select>
-          </div>
-          <div>
-            <label for="speakOn">Spoken replies</label>
-            <select id="speakOn"><option value="1">On</option><option value="0">Off</option></select>
-          </div>
+      <div class="card" style="margin-top:18px"><div class="panel-head"><h2>People and billers you can pay</h2><button class="linkbtn" data-act="send">Send money</button></div><ul class="list" id="contactsList"></ul>
+        <form id="contactForm" class="form-grid" style="margin-top:16px;align-items:end" novalidate>
+          <div class="field" style="margin:0"><label for="cName">Add a person</label><input id="cName" placeholder="Name, like Sunita Aunty"></div>
+          <div class="field" style="margin:0"><label for="cUpi">UPI ID</label><input id="cUpi" placeholder="name@okbank" autocapitalize="off"></div>
+          <button class="primary" type="submit" style="grid-column:1/-1;margin-top:4px">Add contact</button><p class="err" id="cErr" role="alert" style="grid-column:1/-1"></p>
+        </form></div>
+    </section>
+
+    <!-- PAYMENTS & TRANSFERS -->
+    <section class="view hidden" data-view="payments">
+      <div class="hello"><h1>Payments and transfers</h1><p>Send money, pay bills and see every payment you've made.</p></div>
+      <div class="actions" style="margin-bottom:22px" id="payActions"></div>
+      <div class="card" id="statements">
+        <div class="panel-head"><h2>Statement</h2><button class="ghost" id="csvBtn">Download statement</button></div>
+        <div class="filters">
+          <input id="fWho" placeholder="Search by name, like Aman" aria-label="Search by name">
+          <select id="fDays" aria-label="Time period"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="">All time</option></select>
         </div>
         <p id="stmtTotal" style="margin:0 0 6px;color:var(--slate)"></p>
         <ul class="list" id="stmt"></ul>
@@ -317,9 +323,9 @@
     <section class="view hidden" data-view="cards">
       <div class="hello"><h1>Cards</h1><p>Your virtual debit card for this demo account.</p></div>
       <div class="card">
-        <div class="vcard" id="vcard"><div style="display:flex;justify-content:space-between"><b style="font:800 1.2rem var(--display)">EchoMint</b><span>Debit</span></div><div class="chipgold"></div><div class="cn" id="cardNo"></div><div class="foot"><span id="cardName"></span><span>Valid till 10/31</span></div></div>
+        <div class="vcard" id="vcard"><div style="display:flex;justify-content:space-between"><b style="font:800 1.2rem var(--display)">EchoMint</b><span>Debit</span></div><div class="chipgold"></div><div class="cn" id="cardNo"></div><div class="foot"><span id="cardName"></span><span id="cardValid"></span></div></div>
         <label class="toggle"><input type="checkbox" id="freeze"> <span id="freezeLbl">Freeze card</span></label>
-        <p style="color:var(--slate);margin:10px 0 0">Freezing stops new card payments until you turn it back on. Voice and UPI payments are not affected. This prototype's card is for demonstration.</p>
+        <p style="color:var(--slate);margin:10px 0 0">Freezing blocks payments to shops and services (Swiggy, Uber, Amazon…) until you turn it back on. Sending money to people and paying bills still work.</p>
       </div>
     </section>
 
@@ -419,8 +425,9 @@
     <h2 id="vTitle"></h2>
     <p id="vSub"></p>
     <div class="vdigits" id="vDigits" aria-live="polite">– – – – – –</div>
-    <div class="vbar"><i id="vBar"></i></div>
-    <button class="primary" id="vBtn" type="button">🎤 Tap, then read the digits</button>
+    <div class="vtime" aria-hidden="true"><i id="vTimeBar"></i></div>
+    <div class="vlive" id="vLive"><span class="vdot" id="vDot"></span><span id="vLiveTxt">Getting the microphone ready…</span></div>
+    <button class="primary hidden" id="vBtn" type="button">🎤 Start the voice check</button>
     <div id="vPinBox" class="hidden">
       <input id="vPin" type="password" inputmode="numeric" maxlength="4" placeholder="4-digit PIN" autocomplete="off">
       <div class="vrow">
@@ -476,6 +483,7 @@ const P = {
   alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>',
   chev: '<path d="m9 18 6-6-6-6"/>',
   chart: '<path d="M3 3v18h18"/><path d="M7 15v3M11 10v8M15 13v5M19 6v12"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
 };
 const I = (n, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
 
@@ -500,7 +508,7 @@ document.addEventListener("click", (e) => {
 });
 
 /* ---------- quick actions ---------- */
-const QUICK = [["send", "Send Money", "send"], ["bills", "Pay Bills", "bill"], ["recharge", "Recharge Mobile", "phone"], ["invest", "Invest", "invest"],
+const QUICK = [["send", "Send Money", "send"], ["contacts", "Contacts", "users"], ["bills", "Pay Bills", "bill"], ["recharge", "Recharge Mobile", "phone"], ["invest", "Invest", "invest"],
   ["gold", "Digital Gold", "gold"], ["statements", "View Statements", "file"], ["loans", "Loans", "loan"]];
 $("#quick").innerHTML = QUICK.map(([a, n, ic]) => `<button class="qa" type="button" data-act="${a}">${I(ic)}<span>${n}</span></button>`).join("");
 $("#payActions").innerHTML = QUICK.filter(q => ["send", "bills", "recharge", "gold"].includes(q[0]))
@@ -508,7 +516,7 @@ $("#payActions").innerHTML = QUICK.filter(q => ["send", "bills", "recharge", "go
 
 /* ---------- data ---------- */
 let ME = null, HISTORY = [], NOTICES = [];
-const GOLD_RATE = 7350;      // demo price per gram
+const goldPrice = () => Number(ME?.gold?.price_per_gram || 0);   // set by the bank on the server
 const contactsOf = (kind) => (ME?.contacts || []).filter(c => (c.kind || "person") === kind);
 
 async function boot() {
@@ -563,7 +571,7 @@ function txRow(p) {
   const kind = (ME.contacts.find(c => c.name === p.recipient) || {}).kind || "person";
   const ic = { biller: "bill", recharge: "phone", gold: "gold", merchant: "card" }[kind] || "send";
   const ok = p.status === "Success";
-  return `<li><span class="ico">${I(ic)}</span><span class="who2"><b>${esc(p.recipient)}</b><small>${when(p.timestamp)}${p.verified_with ? " · " + (p.verified_with === "PIN" ? "PIN" : "voice") : ""}</small></span>
+  return `<li><span class="ico">${I(ic)}</span><span class="who2"><b>${esc(p.recipient)}</b><small>${when(p.timestamp)}${p.reference ? " · " + esc(kind === "recharge" ? "for " + p.reference : "ref " + p.reference) : ""}${p.verified_with ? " · " + (p.verified_with === "PIN" ? "PIN" : "voice") : ""}</small></span>
     <span class="amt">−${rupees(p.amount)}<br><span class="pill ${ok ? "ok" : "bad"}">${ok ? "completed" : esc(p.status.toLowerCase())}</span></span></li>`;
 }
 function renderRecent() {
@@ -578,7 +586,8 @@ $("#allNotices").addEventListener("click", () => openSheet("Notifications", `<ul
 
 function renderAccounts() {
   $("#acctDetails").innerHTML = `<dt>Account holder</dt><dd>${esc(ME.name)}</dd><dt>Account number</dt><dd>${esc(ME.account_number)}</dd><dt>Bank</dt><dd>${esc(ME.bank_name)}</dd>
-    <dt>Type</dt><dd>Savings</dd><dt>Balance</dt><dd>${rupees(ME.balance)}</dd><dt>Registered phone</dt><dd>${esc(ME.phone)}</dd>`;
+    <dt>Type</dt><dd>Savings</dd><dt>Balance</dt><dd>${rupees(ME.balance)}</dd><dt>Registered phone</dt><dd>+91 ${esc(ME.phone)}</dd>
+    <dt>Customer since</dt><dd>${ME.member_since ? new Date(ME.member_since).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—"}</dd>`;
   const limit = Number(ME.daily_limit), spent = Number(ME.spent_today || 0);
   $("#todayBox").innerHTML = `<div style="font:800 1.8rem var(--display)">${rupees(spent)} <span style="font:400 1rem var(--body,inherit);color:var(--slate)">of ${rupees(limit)}</span></div><div class="meter"><i style="width:${Math.min(100, spent / limit * 100)}%"></i></div>`;
   const label = { person: "Person", biller: "Bill", recharge: "Mobile recharge", gold: "Digital gold", merchant: "Shop" };
@@ -596,20 +605,23 @@ function renderStatement() {
 }
 $("#fWho").addEventListener("input", renderStatement); $("#fDays").addEventListener("change", renderStatement);
 $("#csvBtn").addEventListener("click", () => {
-  const rows = [["Date", "Paid to", "Amount (INR)", "Status", "Confirmed with"], ...filteredStatement().map(p => [new Date(p.timestamp).toLocaleString("en-IN"), p.recipient, p.amount, p.status, p.verified_with || ""])];
+  const rows = [["Date", "Paid to", "Reference", "Amount (INR)", "Status", "Confirmed with"], ...filteredStatement().map(p => [new Date(p.timestamp).toLocaleString("en-IN"), p.recipient, p.reference || "", p.amount, p.status, p.verified_with || ""])];
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   a.download = `echomint-statement-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href);
   toast("Statement downloaded");
 });
 function renderGold() {
-  const paid = HISTORY.filter(p => p.status === "Success" && p.recipient === "EchoMint Gold").reduce((a, p) => a + p.amount, 0);
-  $("#goldBox").innerHTML = `<div class="lbl" style="color:var(--slate)">You own</div><div style="font:800 2rem var(--display)">${(paid / GOLD_RATE).toFixed(3)} g</div>
-    <p style="color:var(--slate);margin:6px 0 0">Bought for ${rupees(paid)}. Demo price ${rupees(GOLD_RATE)} per gram.</p>`;
+  const g = ME.gold || { grams: 0, invested: 0, price_per_gram: 0 };
+  $("#goldBox").innerHTML = `<div class="lbl" style="color:var(--slate)">You own</div><div style="font:800 2rem var(--display)">${Number(g.grams).toFixed(4)} g</div>
+    <p style="color:var(--slate);margin:6px 0 0">${Number(g.invested) ? `Bought for ${rupees(g.invested)}.` : "You haven't bought any gold yet."} EchoMint sells 24K gold at ${rupees(g.price_per_gram)} per gram.</p>`;
 }
 function renderProfile() {
   $("#profileDl").innerHTML = `<dt>Name</dt><dd>${esc(ME.name)}</dd><dt>Phone</dt><dd>${esc(ME.phone)}</dd><dt>Account</dt><dd>${esc(ME.account_number)}</dd><dt>Bank</dt><dd>${esc(ME.bank_name)}</dd>`;
-  $("#cardNo").textContent = "4386 •••• •••• " + ME.account_number.slice(-4); $("#cardName").textContent = ME.name.toUpperCase();
+  const card = ME.card || {};
+  $("#cardNo").textContent = "4386 •••• •••• " + (card.last4 || ME.account_number.slice(-4)); $("#cardName").textContent = ME.name.toUpperCase();
+  $("#cardValid").textContent = "Valid till " + (card.valid_till || "--/--");
+  $("#freeze").checked = !!card.frozen; renderFreeze();
   $("#limitNow").textContent = `Right now you can spend up to ${rupees(ME.daily_limit)} a day.`;
 }
 function renderCalc() {
@@ -621,10 +633,15 @@ function renderCalc() {
   $("#lnOut").innerHTML = `<div style="color:var(--slate)">Monthly payment (EMI)</div><div class="big">${rupees(Math.round(emi || 0))}</div><div style="color:var(--slate)">Total interest ${rupees(Math.round(emi * ln - P0 || 0))} over ${ln} months.</div>`;
 }
 ["sipAmt", "sipYrs", "sipRate", "lnAmt", "lnRate", "lnYrs"].forEach(id => $("#" + id).addEventListener("input", renderCalc));
-$("#freeze").checked = store.get("cardFrozen") === "1";
 function renderFreeze() { $("#vcard").classList.toggle("frozen", $("#freeze").checked); $("#freezeLbl").textContent = $("#freeze").checked ? "Card is frozen" : "Freeze card"; }
-$("#freeze").addEventListener("change", () => { store.set("cardFrozen", $("#freeze").checked ? "1" : "0"); renderFreeze(); toast($("#freeze").checked ? "Card frozen" : "Card unfrozen"); });
-renderFreeze();
+$("#freeze").addEventListener("change", async () => {        // saved on the server: it really blocks shop payments
+  const want = $("#freeze").checked; $("#freeze").disabled = true;
+  const { status, data } = await api("/api/card/freeze/", "POST", { frozen: want });
+  $("#freeze").disabled = false;
+  if (status === 403 && data.code === "voice_required") { $("#freeze").checked = !want; renderFreeze(); ensureVoice(); return; }
+  if (!data.ok) { $("#freeze").checked = !want; renderFreeze(); toast(data.message || "That didn't work."); return; }
+  if (ME && ME.card) ME.card.frozen = data.frozen; renderFreeze(); toast(data.message); refresh();
+});
 
 /* ---------- sheets (pop-up forms) ---------- */
 function openSheet(title, html, onMount) {
@@ -645,10 +662,10 @@ const chipRow = (vals, fmt = (v) => rupees(v)) => `<div class="chips">${vals.map
 function wireChips(body, input) { $$(".chip", body).forEach(c => c.onclick = () => { input.value = c.dataset.v; $$(".chip", body).forEach(x => x.classList.toggle("on", x === c)); input.dispatchEvent(new Event("input")); }); }
 
 /* The one way money moves from these forms: same rules as the voice agent. */
-async function pay(recipient, amount, err) {
+async function pay(recipient, amount, err, reference = "") {
   err.textContent = "";
   if (!(Number(amount) > 0)) { err.textContent = "Enter an amount."; return; }
-  const { status, data } = await api("/api/payments/", "POST", { recipient, amount, idempotency_key: uid() });
+  const { status, data } = await api("/api/payments/", "POST", { recipient, amount, reference, idempotency_key: uid() });
   if (status === 403 && data.code === "voice_required") { closeSheet(); ensureVoice(); return; }
   if (!data.ok) { err.textContent = data.message || "That didn't work."; return; }
   if (data.code === "needs_pin") { closeSheet(); openPin({ id: data.payment_id, amount: data.amount, recipient: data.recipient }); return; }
@@ -677,7 +694,7 @@ function moneyForm({ toLabel, options, presets, extra = "", submit = "Continue",
 }
 function wireMoney(body, recipientOf = () => $("#mfTo").value) {
   wireChips(body, $("#mfAmt"));
-  $("#mf").onsubmit = (e) => { e.preventDefault(); pay(recipientOf(), $("#mfAmt").value, $("#mfErr")); };
+  $("#mf").onsubmit = (e) => { e.preventDefault(); pay(recipientOf(), $("#mfAmt").value, $("#mfErr"), ($("#mfRef")?.value || "").trim()); };
 }
 const ACTIONS = {
   send() {
@@ -700,7 +717,7 @@ const ACTIONS = {
       <div class="chips">${plans.map(([v, d]) => `<button type="button" class="chip" data-v="${v}">${rupees(v)} · ${d}</button>`).join("")}</div></div>
       <button class="primary" type="submit">Recharge</button><p class="err" id="mfErr" role="alert"></p></form>`, (b) => {
       wireChips(b, $("#mfAmt"));
-      $("#mf").onsubmit = (e) => { e.preventDefault(); if (!/^\d{10}$/.test($("#mfNum").value)) { $("#mfErr").textContent = "Enter a 10-digit mobile number."; return; } pay($("#mfTo").value, $("#mfAmt").value, $("#mfErr")); };
+      $("#mf").onsubmit = (e) => { e.preventDefault(); const num = $("#mfNum").value.replace(/\D/g, "").slice(-10); if (!/^[6-9]\d{9}$/.test(num)) { $("#mfErr").textContent = "Enter a 10-digit mobile number."; return; } pay($("#mfTo").value, $("#mfAmt").value, $("#mfErr"), num); };
     });
   },
   gold() {
@@ -709,14 +726,53 @@ const ACTIONS = {
       <div class="calc-out" id="gPrev">Enter an amount to see how much gold you get.</div>
       <button class="primary" type="submit">Buy gold</button><p class="err" id="mfErr" role="alert"></p></form>`, (b) => {
       wireChips(b, $("#mfAmt"));
-      $("#mfAmt").addEventListener("input", () => { const v = +$("#mfAmt").value || 0; $("#gPrev").innerHTML = `You get <b>${(v / GOLD_RATE).toFixed(4)} g</b> at the demo price of ${rupees(GOLD_RATE)} per gram.`; });
+      $("#mfAmt").addEventListener("input", () => { const v = +$("#mfAmt").value || 0; $("#gPrev").innerHTML = `You get <b>${goldPrice() ? (v / goldPrice()).toFixed(4) : "0"} g</b> at ${rupees(goldPrice())} per gram (24K).`; });
       $("#mf").onsubmit = (e) => { e.preventDefault(); pay("EchoMint Gold", $("#mfAmt").value, $("#mfErr")); };
+    });
+  },
+  contacts() {
+    openSheet("Contacts", `<form id="ctForm" class="form-grid" novalidate style="align-items:end">
+        <div class="field" style="margin:0"><label for="ctName">Name</label><input id="ctName" placeholder="Like Sunita Aunty" autocomplete="off"></div>
+        <div class="field" style="margin:0"><label for="ctUpi">UPI ID</label><input id="ctUpi" placeholder="name@okbank" autocapitalize="off" autocomplete="off"></div>
+        <button class="primary" type="submit" style="grid-column:1/-1">Add contact</button><p class="err" id="ctErr" role="alert" style="grid-column:1/-1"></p></form>
+      <h3 style="margin:18px 0 6px">People and shops you can pay</h3>
+      <ul class="list" id="ctList"></ul>
+      <p style="color:var(--slate);margin:10px 0 0;font-size:15px">Bills, mobile recharges and digital gold are built in. Removing someone never changes your past payments.</p>`, (b) => {
+      renderContactSheet();
+      $("#ctForm").onsubmit = async (e) => {
+        e.preventDefault(); $("#ctErr").textContent = "";
+        const { status, data } = await api("/api/contacts/", "POST", { name: $("#ctName").value, upi_id: $("#ctUpi").value });
+        if (status === 403 && data.code === "voice_required") { closeSheet(); ensureVoice(); return; }
+        if (!data.ok) { $("#ctErr").textContent = data.message || "That didn't work."; return; }
+        e.target.reset(); toast(data.message); await refresh(); renderContactSheet(); $("#ctName").focus();
+      };
     });
   },
   invest() { showView("investments"); },
   statements() { showView("payments"); setTimeout(() => $("#statements").scrollIntoView({ behavior: "smooth" }), 50); },
   loans() { showView("loans"); },
 };
+
+/* ---------- contacts sheet: add + remove ---------- */
+function renderContactSheet() {
+  const list = $("#ctList"); if (!list) return;
+  const mine = (ME?.contacts || []).filter(c => ["person", "merchant"].includes(c.kind || "person"));
+  list.innerHTML = mine.map(c => `<li data-id="${c.id}"><span class="ico">${I(c.kind === "merchant" ? "card" : "user")}</span>
+      <span class="who2"><b>${esc(c.name)}</b><small>${esc(c.upi_id)}</small></span>
+      <span class="ctAct"><button type="button" class="ghost ctRm">Remove</button></span></li>`).join("")
+    || `<li class="empty">No contacts yet. Add someone above.</li>`;
+  $$(".ctRm", list).forEach(btn => btn.onclick = () => {
+    const li = btn.closest("li"), name = li.querySelector("b").textContent;
+    li.innerHTML = `<div class="ctConfirm"><span>Remove <b>${esc(name)}</b> from your contacts?</span>
+      <span class="ctBtns"><button type="button" class="ghost ctNo">Keep</button><button type="button" class="primary ctYes">Yes, remove</button></span></div>`;
+    li.querySelector(".ctNo").onclick = renderContactSheet;
+    li.querySelector(".ctYes").onclick = async () => {
+      const { status, data } = await api(`/api/contacts/${li.dataset.id}/remove/`, "POST");
+      if (status === 403 && data.code === "voice_required") { closeSheet(); ensureVoice(); return; }
+      toast(data.message || "That didn't work."); await refresh(); renderContactSheet();
+    };
+  });
+}
 
 /* ---------- profile + settings forms ---------- */
 $("#contactForm").addEventListener("submit", async (e) => {
@@ -751,6 +807,10 @@ $("#lang").onchange = () => langChanged($("#lang").value);
 $("#langQuick").onchange = () => langChanged($("#langQuick").value);
 $("#speakOn").onchange = () => store.set("speakOn", $("#speakOn").value);
 $("#textSize").onchange = () => { store.set("textSize", $("#textSize").value); document.documentElement.classList.toggle("big", $("#textSize").value === "big"); };
+$("#lockBtn").addEventListener("click", async () => {
+  await api("/api/voice/lock/", "POST"); stopSpeaking(); addMsg("sys", "Locked. Voice check needed to continue.");
+  ensureVoice();
+});
 $("#logoutBtn").addEventListener("click", async () => {
   await api("/api/agent/reset/", "POST"); await api("/api/logout/", "POST"); stopSpeaking(); location.href = "/login/";
 });
@@ -826,12 +886,10 @@ function setLang(code) {
 
 async function send(text) {
   text = (text || "").trim(); if (!text || busy) return;
-  busy = true; stopSpeaking(); addMsg("me", text);
-  const t = typing();
-  const { status, data } = await api("/api/agent/chat/", "POST", {
-    message: text,
-    lang: $("#lang").value,
-  });
+  setAssistant(true);
+  busy = true; stopSpeaking(); addMsg("me", text); setAgent("thinking");
+  const t = typing(), t0 = performance.now();
+  const { status, data } = await api("/api/agent/chat/", "POST", { message: text, lang: lang() });
   t.remove(); busy = false;
   if (status === 401) { boot(); return; }
   if (status === 403 && data.code === "voice_required") { setAgent("ready"); addMsg("sys", "Please verify your voice first."); ensureVoice(); return; }
@@ -854,171 +912,33 @@ async function send(text) {
   else { setAgent("ready"); speak(reply, () => { if ($("#handsFree").checked) startListening(); }); }
 }
 $("#composer").addEventListener("submit", (e) => { e.preventDefault(); const v = $("#text").value; $("#text").value = ""; send(v); });
-$("#lang").addEventListener("change", async () => {
-  stopSpeaking();
-  await api("/api/agent/reset/", "POST");
-  addMsg("sys", "Language switched to " + $("#lang").selectedOptions[0].text);
-});
 
-async function loadHistory() {
-  const { status, data } = await api("/api/history/?limit=6");
-  if (status !== 200) return;
-  const ul = $("#tx"); ul.innerHTML = "";
-  if (!data.payments.length) { ul.innerHTML = '<li><small>No payments yet</small></li>'; return; }
-  for (const p of data.payments) {
-    const li = document.createElement("li");
-    const left = document.createElement("div");
-    left.textContent = p.recipient;
-    const sm = document.createElement("small");
-    sm.textContent = new Date(p.timestamp).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-    left.appendChild(sm);
-    const right = document.createElement("div");
-    right.className = "out" + (p.status === "Success" ? "" : " bad");
-    right.textContent = (p.status === "Success" ? "−" : "✕ ") + rupees(p.amount);
-    li.append(left, right); ul.appendChild(li);
-  }
-}
-
-/* ---------------- speech: listening (Sarvam STT with browser fallback) ---- */
+/* ---------------- speech: listening ----------------
+   English: the browser's own recogniser (streams words as you talk, no upload).
+   Indian languages: Sarvam (much better at Hindi, Tamil, Telugu...).
+   Recording stops ~0.7 s after you stop talking. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let mediaRec = null, listening = false, finalText = "";
-let _vadHandler = null;
-
+let rec = null, mediaRec = null, listening = false, finalText = "", micStream = null, SARVAM = false;
+function useSarvamSTT() { const e = $("#engine").value; if (!SARVAM || e === "browser") return false; return e === "sarvam" || lang() !== "en-IN" || !SR; }
+function useSarvamTTS() { const e = $("#engine").value; if (!SARVAM || e === "browser") return false; return e === "sarvam" || lang() !== "en-IN" || !("speechSynthesis" in window); }
 function setListening(on) {
-  listening = on;
-  $("#mic").classList.toggle("live", on);
-  if (!on) $("#heard").textContent = "";
+  listening = on; $("#mic").classList.toggle("live", on);
+  if (on) setAgent("listening"); else { if (!busy && $("#state").dataset.s === "listening") setAgent("ready"); }
 }
-
-// ── Voice Activity Detection (auto-stop when silence detected) ───────────
-function attachVAD(stream, onDone) {
-  try {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AudioCtx();
-    const source = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    source.connect(analyser);
-
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    let speechDetected = false;
-    let silenceStart = null;
-    const SILENCE_MS = 1400; // 1.4 seconds of silence triggers auto-stop
-    const THRESHOLD = 16;    // Volume threshold
-
-    const interval = setInterval(() => {
-      analyser.getByteFrequencyData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) sum += data[i];
-      const avg = sum / data.length;
-
-      if (avg > THRESHOLD) {
-        speechDetected = true;
-        silenceStart = null;
-        $("#heard").textContent = "Listening…";
-      } else if (speechDetected) {
-        const now = Date.now();
-        if (!silenceStart) {
-          silenceStart = now;
-        } else if (now - silenceStart >= SILENCE_MS) {
-          clearInterval(interval);
-          try { ctx.close(); } catch (_) {}
-          onDone();
-        }
-      }
-    }, 60);
-
-    return {
-      stop: () => {
-        clearInterval(interval);
-        try { ctx.close(); } catch (_) {}
-      }
-    };
-  } catch (e) {
-    return { stop: () => {} };
-  }
+function blocked() {
+  return busy || !$("#pinOverlay").classList.contains("hidden") || !$("#voiceOverlay").classList.contains("hidden") || $("#sheetBg");
 }
-
-// ── Sarvam STT via MediaRecorder ──────────────────────────────────────────
-async function sarvamSTT(blob) {
-  const formData = new FormData();
-  formData.append("audio", blob, "audio.webm");
-  formData.append("lang", $("#lang").value);
-  const res = await fetch("/api/voice/stt/", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "X-CSRFToken": csrf() },
-    body: formData,
-  });
-  const data = await res.json();
-  if (data.ok && data.transcript) return data.transcript;
-  return null;
-}
-
 function startListening() {
-  if (listening || busy || !$("#pinOverlay").classList.contains("hidden")) return;
-  stopSpeaking();
-
-  // --- Try Sarvam STT via MediaRecorder first ---
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      const chunks = [];
-      mediaRec = new MediaRecorder(stream);
-      mediaRec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-      mediaRec.onstart = () => {
-        setListening(true);
-        $("#heard").textContent = "Listening…";
-        // Start voice activity detection for automatic silence detection
-        _vadHandler = attachVAD(stream, () => {
-          if (mediaRec && mediaRec.state === "recording") {
-            mediaRec.stop();
-          }
-        });
-        // Hard safety timeout: 25s
-        clearTimeout(window._recAutoStopTimer);
-        window._recAutoStopTimer = setTimeout(() => {
-          if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
-        }, 25000);
-      };
-      mediaRec.onstop = async () => {
-        clearTimeout(window._recAutoStopTimer);
-        if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
-        setListening(false);
-        stream.getTracks().forEach(t => t.stop());
-        $("#heard").textContent = "Processing…";
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        const transcript = await sarvamSTT(blob);
-        $("#heard").textContent = "";
-        if (transcript) {
-          send(transcript);
-        } else {
-          addMsg("sys", "Could not understand audio. Please try again or type.");
-        }
-      };
-      mediaRec.onerror = () => {
-        if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
-        setListening(false);
-        stream.getTracks().forEach(t => t.stop());
-      };
-      mediaRec.start();
-    }).catch((err) => {
-      // Microphone not allowed / unavailable – fall back to browser SR
-      fallbackSTT();
-    });
-    return;
-  }
-  // --- Browser SR fallback ---
-  fallbackSTT();
+  if (listening || blocked()) return;
+  setAssistant(true); stopSpeaking(); finalText = "";
+  if (useSarvamSTT()) sarvamListen(); else browserListen();
 }
-
-function fallbackSTT() {
-  if (!SR) { addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
-  finalText = "";
-  const rec = new SR();
-  rec.lang = $("#lang").value; rec.interimResults = true; rec.continuous = false;
+function browserListen() {
+  if (!SR) { if (SARVAM) return sarvamListen(); addMsg("sys", "Voice input works in Chrome or Edge. You can still type."); return; }
+  rec = new SR(); rec.lang = lang(); rec.interimResults = true; rec.continuous = false;
   rec.onresult = (e) => {
     let t = ""; for (const r of e.results) t += r[0].transcript;
-    $("#heard").textContent = "\u201c" + t + "\u201d";
+    $("#heard").textContent = "“" + t + "”"; robotLevel(0.5);
     if (e.results[e.results.length - 1].isFinal) finalText = t;
   };
   rec.onerror = (e) => {
@@ -1029,80 +949,89 @@ function fallbackSTT() {
   rec.onend = () => { setListening(false); robotLevel(0); $("#heard").textContent = ""; if (finalText) send(finalText); };
   try { rec.start(); setListening(true); } catch (e) { setListening(false); }
 }
-
+async function sarvamListen() {
+  try {
+    if (!micStream || !micStream.active) micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch (e) { addMsg("sys", "Please allow microphone access in your browser."); return; }
+  const type = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  const chunks = []; mediaRec = new MediaRecorder(micStream, type ? { mimeType: type } : undefined);
+  const ctx = new (window.AudioContext || window.webkitAudioContext)(), an = ctx.createAnalyser(); an.fftSize = 512;
+  ctx.createMediaStreamSource(micStream).connect(an);
+  const buf = new Uint8Array(an.fftSize); let spoke = false, quietSince = 0, floor = null, seen = 0, gate = 0.03; const t0 = performance.now();
+  const timer = setInterval(() => {
+    an.getByteTimeDomainData(buf); let s = 0; for (const v of buf) s += (v - 128) * (v - 128);
+    const rms = Math.sqrt(s / buf.length) / 128, now = performance.now();
+    robotLevel(Math.min(1, rms * 8));
+    if (seen < 5) {                       // first ~250 ms: measure the room's background noise
+      floor = floor === null ? rms : Math.min(floor, rms); seen++;
+      gate = Math.min(Math.max(floor * 3, 0.02), 0.06); return;
+    }
+    if (rms > gate) { spoke = true; quietSince = 0; $("#heard").textContent = "Listening…"; }
+    else if (spoke && !quietSince) quietSince = now;
+    if ((spoke && quietSince && now - quietSince > 700) || now - t0 > 15000 || (!spoke && now - t0 > 7000)) stop();
+  }, 50);
+  function stop() { clearInterval(timer); try { ctx.close(); } catch (e) {} if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }
+  mediaRec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRec.onstop = async () => {
+    setListening(false); robotLevel(0);
+    if (!spoke) { $("#heard").textContent = ""; return; }
+    setAgent("thinking"); $("#heard").textContent = "Understanding…";
+    const fd = new FormData(); fd.append("audio", new Blob(chunks, { type: type || "audio/webm" }), "speech.webm"); fd.append("lang", lang());
+    const res = await fetch("/api/voice/stt/", { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": csrf() }, body: fd });
+    const d = await res.json().catch(() => ({}));
+    $("#heard").textContent = "";
+    if (d.ok && d.transcript) send(d.transcript);
+    else if (d.code === "sarvam_unavailable") { SARVAM = false; setAgent("ready"); addMsg("sys", "Indian-language speech isn't set up on the server yet, so I'll use the browser instead."); }
+    else { setAgent("ready"); addMsg("sys", d.message || "I couldn't hear that clearly. Please try again."); }
+  };
+  mediaRec.start(); setListening(true); $("#heard").textContent = "Listening…";
+  window._stopRec = stop;
+}
 $("#mic").addEventListener("click", () => {
-  if (listening) {
-    if (_vadHandler) { _vadHandler.stop(); _vadHandler = null; }
-    // stop whichever recorder is active
-    if (mediaRec && mediaRec.state === "recording") mediaRec.stop();
-    else setListening(false);
-  } else {
-    startListening();
-  }
+  if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
+  else startListening();
 });
 
-/* ---------------- speech: speaking (Sarvam TTS with browser fallback) ----- */
-let _audioCtx = null;
-let _sarvamSource = null;   // current AudioBufferSourceNode, to allow cancellation
-
-function getAudioCtx() {
-  if (!_audioCtx || _audioCtx.state === "closed") {
-    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  return _audioCtx;
-}
-
-async function sarvamTTS(text, lang, onend) {
-  // Never send a PIN or empty string to TTS
-  if (!text || text.length > 1000) { if (onend) onend(); return false; }
-  try {
-    const res = await fetch("/api/voice/tts/", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
-      body: JSON.stringify({ text, language_code: lang }),
-    });
-    const data = await res.json();
-    if (!data.ok || !data.audio_b64) return false;
-
-    // Decode base64 WAV and play via Web Audio API
-    const raw = atob(data.audio_b64);
-    const buf = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
-
-    const ctx = getAudioCtx();
-    const audioBuf = await ctx.decodeAudioData(buf.buffer);
-    if (_sarvamSource) { try { _sarvamSource.stop(); } catch(e) {} }
-    _sarvamSource = ctx.createBufferSource();
-    _sarvamSource.buffer = audioBuf;
-    _sarvamSource.connect(ctx.destination);
-    _sarvamSource.onended = () => { _sarvamSource = null; if (onend) onend(); };
-    _sarvamSource.start(0);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-async function speak(text, onend) {
+/* ---------------- speech: speaking ---------------- */
+let player = null, playerCtx = null, playerAn = null, speakTimer = null;
+function speak(text, onend) {
+  const done = () => { clearInterval(speakTimer); robotLevel(0); if ($("#state").dataset.s === "speaking") setAgent("ready"); if (onend) onend(); };
   if ($("#speakOn").value !== "1") { if (onend) onend(); return; }
-  const lang = $("#lang").value;
-  // Try Sarvam TTS first
-  const ok = await sarvamTTS(text, lang, onend);
-  if (!ok) {
-    // Browser speechSynthesis fallback
-    if (!("speechSynthesis" in window)) { if (onend) onend(); return; }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text.replace(/\u20b9\s?/g, "rupees "));
-    u.lang = lang; u.rate = 1.0;
-    u.onend = () => { if (onend) onend(); };
-    u.onerror = () => { if (onend) onend(); };
-    speechSynthesis.speak(u);
-  }
+  stopSpeaking(); setAgent("speaking");
+  if (useSarvamTTS()) sarvamSpeak(text, done); else browserSpeak(text, done);
 }
-
+function browserSpeak(text, done) {
+  if (!("speechSynthesis" in window)) { done(); return; }
+  const u = new SpeechSynthesisUtterance(text.replace(/₹\s?/g, "rupees "));
+  u.lang = lang(); u.rate = 0.98;
+  const v = speechSynthesis.getVoices().find(v => v.lang === lang()) || speechSynthesis.getVoices().find(v => v.lang.startsWith(lang().slice(0, 2)));
+  if (v) u.voice = v;
+  u.onend = done; u.onerror = done;
+  speakTimer = setInterval(() => robotLevel(0.25 + Math.random() * 0.6), 110);
+  speechSynthesis.speak(u);
+}
+async function sarvamSpeak(text, done) {
+  try {
+    const r = await api("/api/voice/tts/", "POST", { text, language_code: lang() });
+    if (!r.data.ok) throw new Error(r.data.code);
+    const bytes = Uint8Array.from(atob(r.data.audio_b64), c => c.charCodeAt(0));
+    if (!player) {
+      player = new Audio();
+      try { playerCtx = new (window.AudioContext || window.webkitAudioContext)(); playerAn = playerCtx.createAnalyser(); playerAn.fftSize = 256;
+            playerCtx.createMediaElementSource(player).connect(playerAn); playerAn.connect(playerCtx.destination); } catch (e) { playerAn = null; }
+    }
+    if (playerCtx && playerCtx.state === "suspended") await playerCtx.resume();
+    player.src = URL.createObjectURL(new Blob([bytes], { type: r.data.mime || "audio/wav" }));
+    player.onended = done; player.onerror = done;
+    const lv = new Uint8Array(128);
+    speakTimer = setInterval(() => { if (!playerAn) return robotLevel(0.4 + Math.random() * 0.4); playerAn.getByteTimeDomainData(lv);
+      let s = 0; for (const x of lv) s += Math.abs(x - 128); robotLevel(Math.min(1, s / lv.length / 25)); }, 60);
+    await player.play();
+  } catch (e) { clearInterval(speakTimer); if (e && e.message === "sarvam_unavailable") SARVAM = false; browserSpeak(text, done); }
+}
 function stopSpeaking() {
-  if (_sarvamSource) { try { _sarvamSource.stop(); } catch(e) {} _sarvamSource = null; }
+  clearInterval(speakTimer);
+  if (player) { try { player.pause(); } catch (e) {} }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
 }
 
@@ -1159,9 +1088,14 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "Escape") pressKey("Cancel");
 });
 
-/* ---------------- voice security: record, enroll, verify ---------------- */
-const TARGET_RATE = 16000;
-let vMode = null, enrollClips = [], vBusy = false, vFails = 0, vEnrollPin = null, vCanCancel = false;
+/* ---------------- voice security: hands-free, a new number every 15 seconds ----------------
+   The microphone stays open while this box is up. A number is shown with a 15-second
+   timer. As soon as the person finishes reading it (a short pause after speech), the clip
+   is checked automatically. No speech in 15 s -> a new number. A wrong try -> a new number.
+   Someone copying the voice therefore gets 15 seconds for each fresh number, no more. */
+const TARGET_RATE = 16000, MAX_AUTO_FAILS = 4;
+let vMode = null, enrollClips = [], vFails = 0, vEnrollPin = null, vCanCancel = false;
+let vSession = 0, vMic = null;
 
 function mergeChunks(chunks) {
   let n = 0; chunks.forEach(c => n += c.length);
@@ -1193,52 +1127,88 @@ function encodeWav(samples, rate) {            // 16-bit PCM mono WAV
   return new Blob([buf], { type: "audio/wav" });
 }
 
-/* Records until the person has finished speaking (about a second of silence after
-   the digits), so there is no fixed wait. Gives up after maxSeconds. */
-async function recordSmart(onLevel, maxSeconds = 10) {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  try { await ctx.resume(); } catch (e) {}
-  const src = ctx.createMediaStreamSource(stream);
-  const proc = ctx.createScriptProcessor(4096, 1, 1);
-  const chunks = [];
-  const t0 = performance.now();
-  let floor = null, seen = 0, speechMs = 0, lastVoice = 0, started = false;
-  const done = new Promise((resolve) => {
-    proc.onaudioprocess = (e) => {
-      const d = e.inputBuffer.getChannelData(0);
-      chunks.push(new Float32Array(d));
-      let s = 0; for (let i = 0; i < d.length; i++) s += d[i] * d[i];
-      const rms = Math.sqrt(s / d.length), ms = d.length / ctx.sampleRate * 1000, now = performance.now();
-      onLevel(Math.min(rms * 6, 1));
-      if (seen < 4) { floor = floor === null ? rms : Math.min(floor, rms); seen++; return; }
-      if (rms > Math.min(Math.max(0.02, floor * 3), 0.05)) { started = true; speechMs += ms; lastVoice = now; }
-      const elapsed = now - t0;
-      if ((started && speechMs >= 1200 && now - lastVoice > 900) || elapsed > maxSeconds * 1000
-          || (!started && elapsed > 6500)) resolve();
-    };
-  });
-  src.connect(proc); proc.connect(ctx.destination);
-  await done;
-  proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t => t.stop());
-  const rate = ctx.sampleRate; await ctx.close();
-  return encodeWav(downsample(mergeChunks(chunks), rate, TARGET_RATE), TARGET_RATE);
+/* One open microphone that cuts out each spoken answer by itself (voice activity detection).
+   It learns the room's background level while nobody speaks, keeps ~0.5 s from just before
+   the speech starts (so the first digit isn't clipped), and ends the clip after ~1.1 s of quiet. */
+class VoiceMic {
+  async open() {
+    // Same settings for setup and every check: different processing would change the voiceprint.
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    try { await this.ctx.resume(); } catch (e) {}
+    this.rate = this.ctx.sampleRate;
+    this.src = this.ctx.createMediaStreamSource(this.stream);
+    this.proc = this.ctx.createScriptProcessor(2048, 1, 1);
+    this.floor = null; this.armed = false; this.chunks = null;
+    this.proc.onaudioprocess = (e) => this.frame(e.inputBuffer.getChannelData(0));
+    this.src.connect(this.proc); this.proc.connect(this.ctx.destination);
+  }
+  get running() { return !!this.ctx && this.ctx.state === "running"; }
+  get speaking() { return !!this.chunks; }
+  arm(onClip) { this.pre = []; this.chunks = null; this.onset = 0; this.onClip = onClip; this.armed = true; }
+  disarm() { this.armed = false; this.chunks = null; this.onClip = null; }
+  frame(d) {
+    let s = 0; for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+    const rms = Math.sqrt(s / d.length), ms = d.length / this.rate * 1000, now = performance.now();
+    if (this.onLevel) this.onLevel(Math.min(rms * 8, 1), this.speaking);
+    if (!this.chunks) {          // learn the background: fall fast, rise slowly, ignore speech-like bursts
+      if (this.floor === null) this.floor = rms;
+      else if (rms < this.floor) this.floor = this.floor * 0.7 + rms * 0.3;
+      else if (rms < this.floor * 2.5) this.floor = this.floor * 0.99 + rms * 0.01;
+    }
+    if (!this.armed) return;
+    const thr = Math.min(Math.max(this.floor * 3, 0.012), 0.06);
+    const copy = new Float32Array(d);
+    if (!this.chunks) {
+      this.pre.push(copy); if (this.pre.length > 12) this.pre.shift();
+      this.onset = rms > thr ? this.onset + 1 : 0;
+      if (this.onset >= 2) { this.chunks = this.pre; this.pre = []; this.speechMs = 2 * ms; this.lastVoice = now; this.started = now; }
+      return;
+    }
+    this.chunks.push(copy);
+    if (rms > thr * 0.7) { this.speechMs += ms; this.lastVoice = now; }
+    const quiet = now - this.lastVoice;
+    if (this.speechMs < 350 && quiet > 600) { this.chunks = null; this.onset = 0; return; }   // a click or cough
+    if ((this.speechMs >= 1000 && quiet > 1100) || now - this.started > 11000) {
+      const chunks = this.chunks, cb = this.onClip;
+      this.chunks = null; this.armed = false; this.onClip = null;
+      if (cb) cb(encodeWav(downsample(mergeChunks(chunks), this.rate, TARGET_RATE), TARGET_RATE));
+    }
+  }
+  close() {
+    this.armed = false;
+    try { this.proc.disconnect(); this.src.disconnect(); } catch (e) {}
+    try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    try { this.ctx.close(); } catch (e) {}
+  }
 }
+
 async function upload(url, blobs, extra = {}) {
   const fd = new FormData(); blobs.forEach((b, i) => fd.append("audio", b, `clip${i}.wav`));
   Object.entries(extra).forEach(([k, v]) => fd.append(k, v));
-  const res = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": csrf() }, body: fd });
-  let data = {}; try { data = await res.json(); } catch (e) {}
-  return { status: res.status, data };
+  try {
+    const res = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "X-CSRFToken": csrf() }, body: fd });
+    let data = {}; try { data = await res.json(); } catch (e) {}
+    return { status: res.status, data };
+  } catch (e) { return { status: 0, data: { message: "Can't reach EchoMint. Check the internet connection." } }; }
 }
 
+function scoreText(sc) {
+  return sc ? `\nVoice match ${sc.you} (needs ${sc.needed}) · closest other voice ${sc.other}` : "";
+}
 function vSay(text, kind) { const m = $("#vMsg"); m.textContent = text || ""; m.className = kind || ""; }
 function vShow(sel, on) { $(sel).classList.toggle("hidden", !on); }
-async function newChallenge(n) {
-  const { data } = await api("/api/voice/challenge/?n=" + n);
-  $("#vDigits").textContent = data.spoken || "– – – – – –";
+function vLive(text, dot = "") { $("#vLiveTxt").textContent = text; $("#vDot").className = "vdot " + dot; }
+function vTimer(left, total) {
+  const bar = $("#vTimeBar"), f = Math.max(0, Math.min(1, left / total));
+  bar.style.transform = `scaleX(${f})`; bar.classList.toggle("low", left < 4000);
 }
+function showDigits(spoken) {
+  const d = $("#vDigits"); d.textContent = spoken || "– – – – – –";
+  d.classList.remove("fresh"); void d.offsetWidth; d.classList.add("fresh");
+}
+
 async function ensureVoice() {
   const { status, data } = await api("/api/voice/status/");
   if (status === 200) SARVAM = !!data.sarvam;
@@ -1246,98 +1216,170 @@ async function ensureVoice() {
   if (!data.engine_available) { openVoice("error"); return; }
   openVoice(data.enrolled ? "verify" : "enroll");
 }
-function setEnrollTitle() { $("#vStep").textContent = `Voice setup · Sample ${enrollClips.length + 1} of 3`; }
+function setEnrollTitle() { $("#vStep").textContent = `Voice setup · Sample ${Math.min(enrollClips.length + 1, 3)} of 3`; }
+
+function releaseAssistantMic() {
+  stopSpeaking();
+  if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
+  if (micStream) { try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {} micStream = null; }
+}
 
 async function openVoice(mode, opts = {}) {
-  vMode = mode; enrollClips = []; vBusy = false; vFails = 0; vEnrollPin = opts.pin || null; vCanCancel = !!opts.cancel;
-  stopSpeaking(); if (listening) { if (rec) try { rec.stop(); } catch (e) {} if (window._stopRec) window._stopRec(); }
-  $("#vBar").style.width = "0"; vSay(""); $("#vPin").value = "";
-  vShow("#vPinBox", false); vShow("#vPinLink", false); vShow("#vCancel", vCanCancel);
-  vShow("#vBtn", true); $("#vBtn").disabled = false; vShow("#vDigits", true);
+  vSession++;                                   // stops any loop still running
+  vMode = mode; enrollClips = []; vFails = 0; vEnrollPin = opts.pin || null; vCanCancel = !!opts.cancel;
+  releaseAssistantMic();
+  vSay(""); $("#vPin").value = ""; vTimer(15000, 15000);
+  vShow("#vPinBox", false); vShow("#vPinLink", mode !== "enroll"); vShow("#vCancel", vCanCancel);
+  vShow("#vBtn", false); vShow("#vDigits", true); vShow("#vLive", true); vShow(".vtime", true);
+  showDigits("");
   if (mode === "error") {
     $("#vStep").textContent = "Voice security";
     $("#vTitle").textContent = "Voice engine not ready";
     $("#vSub").textContent = "The server is missing the voice model (torch + speechbrain).";
-    vShow("#vDigits", false); vShow("#vBtn", false); vShow("#vPinLink", true);
+    vShow("#vDigits", false); vShow("#vLive", false); vShow(".vtime", false); vShow("#vPinLink", true);
     vSay("Install it with: pip install torch torchaudio speechbrain — or use your PIN to continue.", "bad");
   } else if (mode === "enroll") {
     setEnrollTitle();
     $("#vTitle").textContent = "Teach EchoMint your voice";
-    $("#vSub").textContent = "Read the digits in your normal voice, like you're talking to a friend. We keep a voiceprint, never the recording.";
-    await newChallenge(8);
+    $("#vSub").textContent = "Read each number out loud in your normal voice. A new one appears every 15 seconds. We keep a voiceprint, never the recording.";
   } else {
     $("#vStep").textContent = "Voice check";
-    $("#vTitle").textContent = "Say the digits to unlock";
-    $("#vSub").textContent = "Read these digits out loud. This proves it's really you, speaking right now.";
-    vShow("#vPinLink", true);
-    await newChallenge(6);
+    $("#vTitle").textContent = "Read the number out loud";
+    $("#vSub").textContent = "It changes every 15 seconds, so only you, speaking right now, can pass.";
   }
   $("#voiceOverlay").classList.remove("hidden");
-  autoStartIfAllowed();
+  if (mode !== "error" && !opts.pinFirst) startVoiceLoop();
 }
-function closeVoice() { $("#voiceOverlay").classList.add("hidden"); }
+function stopVoiceLoop() { vSession++; if (vMic) vMic.disarm(); vTimer(15000, 15000); }
+function closeVoice() {
+  vSession++;
+  if (vMic) { vMic.close(); vMic = null; }
+  $("#voiceOverlay").classList.add("hidden");
+}
 
-/* If the mic is already allowed, start listening by itself: nothing to tap. */
-async function autoStartIfAllowed() {
+async function startVoiceLoop() {
+  const sess = ++vSession;
+  vShow("#vBtn", false);
   try {
-    const p = await navigator.permissions.query({ name: "microphone" });
-    if (p.state === "granted" && !vBusy && vMode && vMode !== "error"
-        && $("#vPinBox").classList.contains("hidden")) setTimeout(() => { if (!vBusy) onRecordClick(); }, 600);
-  } catch (e) { /* tap the button instead */ }
-}
-
-async function onRecordClick() {
-  if (vBusy) return; vBusy = true; $("#vBtn").disabled = true; vSay("Listening… read the digits now");
-  let clip;
-  try { clip = await recordSmart(l => { $("#vBar").style.width = (l * 100) + "%"; }); }
-  catch (e) { vBusy = false; $("#vBtn").disabled = false; $("#vBar").style.width = "0";
-              vSay("I couldn't use the microphone. Please allow microphone access and try again.", "bad"); return; }
-  $("#vBar").style.width = "0";
-
-  if (vMode === "enroll") {
-    enrollClips.push(clip);
-    if (enrollClips.length < 3) {
-      setEnrollTitle(); vSay("Got it. Now read the new digits.", "good"); await newChallenge(8);
-      vBusy = false; $("#vBtn").disabled = false; autoStartIfAllowed(); return;
-    }
-    vSay("Saving your voice…");
-    const { data } = await upload("/api/voice/enroll/", enrollClips, vEnrollPin ? { pin: vEnrollPin } : {});
-    if (data.ok) {
-      vSay(data.message, "good");
-      setTimeout(() => { closeVoice(); addMsg("bot", "Your voice is saved and you're verified. How can I help?"); }, 700);
-    } else {
-      enrollClips = []; setEnrollTitle();
-      vSay((data.message || "That didn't work.") + " Let's start again.", "bad"); await newChallenge(8);
-      vBusy = false; $("#vBtn").disabled = false;
-      if (data.fallback_pin) vShow("#vPinLink", true);
-    }
+    if (!vMic) { vLive("Getting the microphone ready…", "busy"); vMic = new VoiceMic(); await vMic.open(); }
+    else if (!vMic.running) { try { await vMic.ctx.resume(); } catch (e) {} }
+  } catch (e) {
+    vMic = null; vLive("Microphone not available");
+    vSay("Please allow the microphone so I can hear you, or use your PIN.", "bad");
+    $("#vBtn").textContent = "🎤 Try the microphone again"; vShow("#vBtn", true); vShow("#vPinLink", true);
     return;
   }
+  if (sess !== vSession) return;
+  if (!vMic.running) {          // the browser wants one tap before it lets a page listen
+    vLive("One tap and I'll start listening");
+    $("#vBtn").textContent = "🎤 Start the voice check"; vShow("#vBtn", true);
+    return;
+  }
+  vMic.onLevel = (l, talking) => { const dot = $("#vDot"); dot.style.transform = `scale(${1 + l * 0.9})`; dot.classList.toggle("on", talking || l > 0.25); };
+  voiceRound(sess);
+}
 
-  vSay("Checking…");
-  const { status, data } = await upload("/api/voice/verify/", [clip]);
-  if (data.ok) {
-    vSay("Verified ✓", "good");
-    setTimeout(() => { closeVoice(); addMsg("bot", "You're verified. How can I help?", "ok"); }, 450);
-  } else {
-    vFails++;
-    let m = data.message || "Verification failed.";
-    if (location.hash === "#debug" && data.debug_similarity !== undefined) m += ` [debug: ${data.debug_similarity}]`;
-    vSay(m, "bad");
-    if (vFails >= 1 || data.fallback_pin) vShow("#vPinLink", true);
-    if (status !== 423) await newChallenge(6);
-    vBusy = false; $("#vBtn").disabled = status === 423;
+/* One 15-second number. Resolves with a clip, or null if nobody spoke in time. */
+function captureWithin(sess, totalMs) {
+  return new Promise((resolve) => {
+    const deadline = performance.now() + totalMs;
+    let done = false;
+    const finish = (clip) => { if (done) return; done = true; clearInterval(t); if (vMic) vMic.disarm(); resolve(clip); };
+    vMic.arm((clip) => finish(clip));
+    const t = setInterval(() => {
+      if (sess !== vSession || !vMic) { finish(null); return; }
+      const left = deadline - performance.now();
+      vTimer(left, totalMs);
+      if (vMic.speaking) vLive("Hearing you…", "on");
+      if (left <= 0 && !vMic.speaking) finish(null);          // started late = allowed to finish (≤ 4 s)
+      else if (left < -4000) finish(null);
+    }, 100);
+  });
+}
+
+async function voiceRound(sess) {
+  while (sess === vSession) {
+    const n = 8;          // 8 digits: measured to separate voices far better than 6 in a noisy room
+    const { status, data } = await api("/api/voice/challenge/?n=" + n);
+    if (sess !== vSession) return;
+    if (status !== 200) { vLive("Can't reach EchoMint"); vSay("Check the internet connection, then try again.", "bad"); $("#vBtn").textContent = "Try again"; vShow("#vBtn", true); return; }
+    showDigits(data.spoken);
+    vLive(vMode === "enroll" ? "Listening… read the number" : "Listening… just read the number", "");
+    const clip = await captureWithin(sess, (data.seconds || 15) * 1000);
+    if (sess !== vSession) return;
+    if (!clip) { vSay("Time's up, here's a new number."); continue; }
+    vLive("Checking…", "busy"); vTimer(0, 1);
+    const carryOn = await handleClip(clip, sess);
+    if (!carryOn) return;
   }
 }
-$("#vBtn").addEventListener("click", onRecordClick);
+
+/* Returns true to show the next number, false to stop the loop. */
+async function handleClip(clip, sess) {
+  if (vMode === "enroll") {
+    enrollClips.push(clip);
+    if (enrollClips.length < 3) { setEnrollTitle(); vSay(`Got it ✓  Now the next number (${enrollClips.length} of 3 done).`, "good"); return true; }
+    vLive("Saving your voice…", "busy"); vSay("");
+    const { data } = await upload("/api/voice/enroll/", enrollClips, vEnrollPin ? { pin: vEnrollPin } : {});
+    if (sess !== vSession) return false;
+    if (data.ok) {
+      vLive("Saved ✓", "on"); vSay(data.message, "good");
+      setTimeout(() => { closeVoice(); addMsg("bot", "Your voice is saved and you're verified. How can I help?"); }, 700);
+      return false;
+    }
+    enrollClips = []; setEnrollTitle();
+    vSay((data.message || "That didn't work.") + " Let's start again.", "bad");
+    if (data.fallback_pin) vShow("#vPinLink", true);
+    return true;
+  }
+
+  const { status, data } = await upload("/api/voice/verify/", [clip]);
+  if (sess !== vSession) return false;
+  const first = (ME?.name || "").split(" ")[0] || "the owner";
+  if (data.ok) {
+    vLive("Verified ✓", "on"); vSay(`✅ Voice matches ${first}. Welcome back!` + scoreText(data.scores), "good");
+    setTimeout(() => { closeVoice(); addMsg("bot", "You're verified. How can I help?", "ok"); }, data.scores ? 2600 : 900);
+    return false;
+  }
+  if (data.code === "voice_mismatch") {
+    // Stop listening: whoever is talking now is not the owner. Nothing more is counted
+    // until someone taps Try again (so a friend's chatter can't lock the account).
+    vLive("Not the account owner");
+    vSay(`❌ This voice doesn't match ${first}'s voiceprint. Access denied.` + scoreText(data.scores), "bad");
+    $("#vBtn").textContent = "🎤 Try again"; vShow("#vBtn", true); vShow("#vPinLink", true);
+    return false;
+  }
+  if (data.code === "challenge_expired") { vSay("That took a little too long. Here's a new number."); return true; }
+  let m = data.message || "That didn't work.";
+  if (data.heard) m += ` (I heard: ${data.heard})`;
+  if (location.hash === "#debug" && data.debug_similarity !== undefined) m += ` [debug: you ${data.debug_similarity}, nearest other voice ${data.debug_other ?? "-"}]`;
+  vSay(m, "bad");
+  vShow("#vPinLink", true);
+  if (status === 423 || data.code === "engine_missing") { vLive("Paused"); return false; }
+  if (status === 503 || status === 0) { vLive("Paused"); $("#vBtn").textContent = "Try again"; vShow("#vBtn", true); return false; }
+  if (!["no_digits", "audio_noisy", "audio_silent", "audio_too_short"].includes(data.code)) vFails++;
+  if (vFails >= MAX_AUTO_FAILS) {        // don't let background noise burn through the attempts
+    vLive("Paused after a few tries"); vSay(m + " Move somewhere quieter, then tap Try again, or use your PIN.", "bad");
+    $("#vBtn").textContent = "🎤 Try again"; vShow("#vBtn", true);
+    return false;
+  }
+  return true;
+}
+
+$("#vBtn").addEventListener("click", async () => {
+  if (vMic && !vMic.running) { try { await vMic.ctx.resume(); } catch (e) {} }   // inside the tap: allowed
+  vFails = 0; vSay(""); startVoiceLoop();
+});
 
 /* ----- backup: PIN instead of voice, and PIN-protected re-recording ----- */
 $("#vPinLink").addEventListener("click", () => {
-  vShow("#vPinBox", true); vShow("#vPinLink", false); $("#vPin").focus(); vSay("");
+  stopVoiceLoop(); vLive("Paused");
+  vShow("#vPinBox", true); vShow("#vPinLink", false); vShow("#vBtn", false); $("#vPin").focus(); vSay("");
 });
 $("#vPinBack").addEventListener("click", () => {
   vShow("#vPinBox", false); vShow("#vPinLink", true);
-  const ok = vMode !== "error"; vShow("#vBtn", ok); vShow("#vDigits", ok);
+  const ok = vMode !== "error"; vShow("#vDigits", ok); vShow("#vLive", ok); vShow(".vtime", ok);
+  if (ok) { vFails = 0; startVoiceLoop(); }
 });
 $("#vCancel").addEventListener("click", closeVoice);
 let pinGoBusy = false;
@@ -1354,13 +1396,14 @@ $("#vPinRe").addEventListener("click", async () => {
   openVoice("enroll", { pin: pinv, cancel: true });
 });
 $("#reVoice").addEventListener("click", () => {
-  openVoice("verify", { cancel: true });
-  vShow("#vPinBox", true); vShow("#vPinLink", false); vShow("#vBtn", false); vShow("#vDigits", false);
+  openVoice("verify", { cancel: true, pinFirst: true });
+  vShow("#vPinBox", true); vShow("#vPinLink", false); vShow("#vBtn", false); vShow("#vDigits", false); vShow("#vLive", false); vShow(".vtime", false);
   $("#vTitle").textContent = "Re-record your voice"; $("#vSub").textContent = "Enter your PIN to teach EchoMint your voice again.";
   $("#vPin").focus();
 });
 
 showView(location.hash.slice(1));
+addEventListener("hashchange", () => showView(location.hash.slice(1)));   // Back button and #links switch pages too
 buildPad(); boot();
 window.attachBot = (b) => { BOT = b; setAgent($("#state").dataset.s); };
 </script>

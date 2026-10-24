@@ -19,12 +19,12 @@
       <label for="name">Your full name</label>
       <input id="name" name="name" autocomplete="name" required>
       <label for="phone">Mobile number</label>
-      <input id="phone" name="phone" inputmode="numeric" autocomplete="tel" maxlength="10" required>
+      <input id="phone" name="phone" inputmode="tel" autocomplete="tel" placeholder="10-digit mobile number" required>
       <label for="password">Choose a password</label>
       <input id="password" name="password" type="password" autocomplete="new-password" required>
       <label for="pin">Choose a 4-digit PIN</label>
       <input id="pin" name="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="off" required>
-      <p class="pin-hint">You'll type this PIN for payments of ₹500 or more. Never tell it to anyone.</p>
+      <p class="pin-hint">You'll type this PIN for payments of ₹500 or more, and to reset your password. Never tell it to anyone.</p>
       <span class="ring"><button class="btn btn-ink" type="submit" id="go"><span class="dot" aria-hidden="true"></span>Create my account</button></span>
       <p class="login-error" id="err" role="alert"></p>
       <div class="login-foot">
@@ -32,6 +32,7 @@
         <a href="/">Back to home</a>
       </div>
     </form>
+
   </div>
 </main>
 
@@ -100,7 +101,7 @@
   const form = document.getElementById("signupForm"), err = document.getElementById("err"), go = document.getElementById("go");
   form.addEventListener("submit", async (e) => {
     e.preventDefault(); err.textContent = "";
-    const body = { full_name: form.name.value, phone: form.phone.value.replace(/\D/g, ""), password: form.password.value, pin: form.pin.value };
+    const body = { full_name: form.name.value, phone: form.phone.value.replace(/\D/g, "").slice(-10), password: form.password.value, pin: form.pin.value };
     if (!body.full_name.trim() || !body.phone || !body.password || !body.pin) { err.textContent = "Please fill in all four boxes."; return; }
     go.disabled = true;
     try {

@@ -16,10 +16,12 @@
     <p class="lede">Log in, then just talk.</p>
 
     <form class="login-card" id="loginForm" novalidate>
-      <label for="phone">Phone number</label>
-      <input id="phone" name="phone" inputmode="numeric" autocomplete="username" required>
+      <p class="login-ok" id="ok" role="status"></p>
+      <label for="phone">Mobile number</label>
+      <input id="phone" name="phone" inputmode="tel" autocomplete="username" placeholder="10-digit mobile number" required>
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <a class="forgot" href="/forgot-password/">Forgot password?</a>
       <span class="ring"><button class="btn btn-ink" type="submit" id="go"><span class="dot" aria-hidden="true"></span>Log in</button></span>
       <p class="login-error" id="err" role="alert"></p>
       <div class="login-foot">
@@ -93,9 +95,17 @@
   // Log in
   const csrf = () => (document.cookie.split("; ").find(r => r.startsWith("csrftoken=")) || "").split("=")[1] || "";
   const form = document.getElementById("loginForm"), err = document.getElementById("err"), go = document.getElementById("go");
-  function fillDemo() { form.phone.value = "9876543210"; form.password.value = "demo1234"; }
+  const DEMO = { phone: "{{ demo_phone|escapejs }}", password: "{{ demo_password|escapejs }}" };
+  const phone10 = (v) => v.replace(/\D/g, "").slice(-10);          // "+91 98111 22233" -> "9811122233"
+  function fillDemo() { form.phone.value = DEMO.phone; form.password.value = DEMO.password; }
   document.getElementById("demo").addEventListener("click", () => { fillDemo(); go.focus(); });
-  if (new URLSearchParams(location.search).has("demo")) fillDemo();
+  const qs = new URLSearchParams(location.search);
+  if (qs.has("demo")) fillDemo();
+  if (qs.get("reset") === "1") {
+    document.getElementById("ok").textContent = "Password changed. Log in with your new password.";
+    if (qs.get("phone")) form.phone.value = phone10(qs.get("phone"));
+    form.password.focus();
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault(); err.textContent = "";
     if (!form.phone.value.trim() || !form.password.value) { err.textContent = "Enter your phone number and password."; return; }
@@ -103,7 +113,7 @@
     try {
       const res = await fetch("/api/login/", { method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
-        body: JSON.stringify({ phone: form.phone.value.replace(/\D/g, ""), password: form.password.value }) });
+        body: JSON.stringify({ phone: phone10(form.phone.value), password: form.password.value }) });
       const data = await res.json().catch(() => ({}));
       if (res.ok) { location.href = "/app/"; return; }
       err.textContent = data.message || "That didn't work. Check your phone number and password.";

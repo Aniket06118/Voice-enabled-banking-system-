@@ -416,9 +416,15 @@ OWNER_AGAIN = np.array([0.98, 0.25, 0.12, 0.02])     # same person, slightly dif
 STRANGER = np.array([0.0, 0.1, 1.0, 0.3])            # clearly a different voice
 
 
-def wav_bytes(seconds=3.0, amplitude=0.2, rate=16000):
+def wav_bytes(seconds=3.0, amplitude=0.2, rate=16000, pad=0.5, noise=0.0):
+    """A test 'voice' clip: a tone with quiet gaps before and after, like a real recording."""
     t = np.arange(int(seconds * rate)) / rate
-    data = (amplitude * np.sin(2 * np.pi * 220 * t) * 32767).astype("<i2")
+    tone = amplitude * np.sin(2 * np.pi * 220 * t)
+    gap = np.zeros(int(pad * rate))
+    x = np.concatenate([gap, tone, gap])
+    if noise:
+        x = x + np.random.default_rng(0).normal(0, noise, len(x))
+    data = (np.clip(x, -1, 1) * 32767).astype("<i2")
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(data.tobytes())
@@ -569,7 +575,7 @@ class VoiceTests(TestCase):
 
 class VoiceAudioUnitTests(TestCase):
     def test_decode_resamples_and_mixes_to_mono(self):
-        samples = voice.decode_wav(wav_bytes(seconds=2, rate=48000))
+        samples = voice.decode_wav(wav_bytes(seconds=2, rate=48000, pad=0))
         self.assertAlmostEqual(len(samples) / voice.SAMPLE_RATE, 2.0, places=1)
 
     def test_garbage_is_rejected(self):
@@ -613,7 +619,7 @@ class VoiceTuningTests(TestCase):
 
     # --- threshold -----------------------------------------------------
     def test_challenge_length(self):
-        self.assertEqual(len(self.client.get("/api/voice/challenge/").json()["digits"]), 6)
+        self.assertEqual(len(self.client.get("/api/voice/challenge/").json()["digits"]), 8)
         self.assertEqual(len(self.client.get("/api/voice/challenge/?n=8").json()["digits"]), 8)
         self.assertEqual(len(self.client.get("/api/voice/challenge/?n=99").json()["digits"]), 8)
 
@@ -628,7 +634,8 @@ class VoiceTuningTests(TestCase):
         with patch.object(voice, "embed_signal", side_effect=[OWNER, OWNER_AGAIN, OWNER]):
             r = self.client.post("/api/voice/enroll/", {"audio": [clip(), clip(), clip()]})
         self.assertTrue(r.json()["ok"], r.json())
-        self.assertEqual(VoiceProfile.objects.get(account=self.acct).threshold, 0.42)
+        from django.conf import settings as dj
+        self.assertEqual(VoiceProfile.objects.get(account=self.acct).threshold, dj.VOICE_THRESHOLD_CAP)
 
     def test_borderline_owner_now_gets_in_but_stranger_does_not(self):
         r, _ = self.verify(0.52); self.assertTrue(r.json()["ok"], r.json())     # the old 0.65 line rejected this
@@ -644,11 +651,14 @@ class VoiceTuningTests(TestCase):
     def test_digit_helpers(self):
         self.assertEqual(voice.only_digits("४ 7 २ 9"), "4729")                 # Hindi numerals
         self.assertTrue(voice.digits_close("123456", "123456"))
-        self.assertTrue(voice.digits_close("123457", "123456"))
+        self.assertTrue(voice.digits_close("123457", "123456"))     # one misheard digit
+        self.assertTrue(voice.digits_close("12345", "123456"))      # one missed digit
+        self.assertTrue(voice.digits_close("1234566", "123456"))    # one extra digit
         self.assertFalse(voice.digits_close("123477", "123456"))
-        self.assertFalse(voice.digits_close("12345", "123456"))
+        self.assertFalse(voice.digits_close("1234", "123456"))
+        self.assertFalse(voice.digits_close("", "123456"))
 
-    def test_one_wrong_digit_is_forgiven_only_when_voice_is_clearly_the_owner(self):
+    def test_one_wrong_digit_is_forgiven_once_the_voice_has_passed(self):
         ch = self.client.get("/api/voice/challenge/").json()["digits"]
         near = ch[:-1] + str((int(ch[-1]) + 1) % 10)
         with patch.object(voice, "embed_signal", return_value=vec(0.80)), \
@@ -658,7 +668,12 @@ class VoiceTuningTests(TestCase):
         ch = self.client.get("/api/voice/challenge/").json()["digits"]
         near = ch[:-1] + str((int(ch[-1]) + 1) % 10)
         with patch.object(voice, "embed_signal", return_value=vec(0.45)), \
-             patch.object(voice, "transcribe_digits", return_value=near):                  # borderline voice
+             patch.object(voice, "transcribe_digits", return_value=near):                  # voice passed, 1 slip
+            self.assertTrue(self.client.post("/api/voice/verify/", {"audio": clip()}).json()["ok"])
+        self.fresh()
+        ch = self.client.get("/api/voice/challenge/").json()["digits"]
+        with patch.object(voice, "embed_signal", return_value=vec(0.45)), \
+             patch.object(voice, "transcribe_digits", return_value=ch[:-2] + "00" if ch[-2:] != "00" else ch[:-2] + "11"):
             self.assertEqual(self.client.post("/api/voice/verify/", {"audio": clip()}).json()["code"], "phrase_mismatch")
 
     def test_totally_wrong_digits_always_fail(self):
@@ -666,20 +681,17 @@ class VoiceTuningTests(TestCase):
         self.assertEqual(r.json()["code"], "phrase_mismatch")
 
     # --- learning ------------------------------------------------------
-    def test_voiceprint_learns_from_clean_logins_only(self):
+    def test_logins_never_change_the_saved_voiceprint(self):
         before = VoiceProfile.objects.get(account=self.acct)
-        self.verify(0.80)
+        self.assertTrue(self.verify(0.80)[0].json()["ok"])
         after = VoiceProfile.objects.get(account=self.acct)
-        self.assertEqual(after.samples, before.samples + 1)
-        self.assertNotEqual(after.embedding, before.embedding)
-        self.fresh(); self.verify(0.42)                                  # passes, but not cleanly enough to learn
-        self.assertEqual(VoiceProfile.objects.get(account=self.acct).samples, after.samples)
+        self.assertEqual((after.embedding, after.samples), (before.embedding, before.samples))
 
     # --- not getting stuck ---------------------------------------------
     def test_speech_service_outage_is_not_the_users_fault(self):
         ch = self.client.get("/api/voice/challenge/").json()
         err = voice.VoiceError("stt_unavailable", "down")
-        with patch.object(voice, "embed_signal", return_value=vec(0.9)), \
+        with patch.object(voice, "embed_signal", return_value=vec(0.45)), \
              patch.object(voice, "transcribe_digits", side_effect=err):
             r = self.client.post("/api/voice/verify/", {"audio": clip()})
         self.assertEqual(r.status_code, 503); self.assertTrue(r.json()["fallback_pin"])
@@ -776,7 +788,9 @@ class DashboardApiTests(TestCase):
     def test_me_has_contact_kinds_and_spent_today(self):
         me = self.client.get("/api/me/").json()
         self.assertIn("spent_today", me)
-        self.assertIn({"name": "Adani Electricity", "upi_id": "a@bill", "kind": "biller"}, me["contacts"])
+        self.assertIn({"name": "Adani Electricity", "upi_id": "a@bill", "kind": "biller"},
+                      [{k: c[k] for k in ("name", "upi_id", "kind")} for c in me["contacts"]])
+        self.assertTrue(all(isinstance(c["id"], int) for c in me["contacts"]))
 
     def test_bill_payment_follows_the_same_pin_rule(self):
         r = self.post("/api/payments/", {"recipient": "Adani Electricity", "amount": 1200})
@@ -929,7 +943,7 @@ class AnalysisTests(TestCase):
     def test_agent_tool_is_bound_to_the_logged_in_account(self):
         ui = []
         tools = {t.name: t for t in agent.build_tools(self.acct, ui)}
-        out = async_to_sync(tools["analyze_spending"].ainvoke)({"category": "food", "period": "last_month"})
+        out = async_to_sync(tools["analyze_spending"].ainvoke)({"category": "food", "period": "last_30_days"})
         self.assertIn("Analysis ready", out)
         a = Analysis.objects.get(pk=ui[0]["id"])
         self.assertEqual((a.account_id, a.params["category"]), (self.acct.pk, "food"))
@@ -1032,7 +1046,7 @@ class SignupTests(TestCase):
         return self.client.post("/api/signup/", body, content_type="application/json")
 
     def test_signup_creates_a_ready_account_and_logs_in(self):
-        r = self.post({"full_name": "Kamla Devi", "phone": "98111 22233", "password": "secret1", "pin": "5829"})
+        r = self.post({"full_name": "Kamla Devi", "phone": "+91 98111 22233", "password": "secret1", "pin": "5829"})
         self.assertEqual(r.status_code, 200, r.json())
         acct = Account.objects.get(phone="9811122233")
         self.assertEqual(acct.balance, services.STARTER_BALANCE)
@@ -1080,3 +1094,322 @@ class SarvamTests(TestCase):
             self.assertEqual(r["transcript"], "अमन को 200 भेजो")
             r = self.client.post("/api/voice/tts/", {"text": "नमस्ते", "language_code": "hi-IN"}, content_type="application/json").json()
             self.assertEqual((r["audio_b64"], r["mime"]), ("QUJD", "audio/mpeg"))
+
+
+# ======================================================================= forgot password (PIN)
+J = "application/json"
+
+
+class ForgotPasswordTests(TestCase):
+    """Forgot password = registered mobile number + the account PIN -> new password."""
+
+    def setUp(self):
+        self.acct = make_account(phone="9811122233")          # PIN 1234, password pass1234
+
+    def reset(self, pin="1234", password="newpass99", phone="+91 98111 22233"):
+        return self.client.post("/api/password/reset/", {"phone": phone, "pin": pin, "password": password}, content_type=J)
+
+    def login(self, password):
+        return self.client.post("/api/login/", {"phone": "9811122233", "password": password}, content_type=J)
+
+    def test_reset_with_the_pin(self):
+        r = self.reset()
+        self.assertTrue(r.json()["ok"], r.json())
+        self.assertEqual(r.json()["phone"], "9811122233")
+        self.assertEqual(self.login("pass1234").status_code, 400)        # old password no longer works
+        self.assertEqual(self.login("newpass99").status_code, 200)
+        self.assertTrue(AuditLog.objects.filter(account=self.acct, event="password_reset").exists())
+
+    def test_wrong_pin_and_unknown_number_look_the_same(self):
+        wrong = self.reset(pin="9999").json()
+        unknown = self.reset(phone="9000000099").json()
+        self.assertEqual((wrong["code"], wrong["message"]), (unknown["code"], unknown["message"]))
+        self.assertEqual(self.login("newpass99").status_code, 400)
+
+    def test_pin_cannot_be_guessed(self):
+        for _ in range(3):
+            self.reset(pin="0000")
+        r = self.reset(pin="1234")                                   # even the right PIN: locked now
+        self.assertEqual((r.status_code, r.json()["code"]), (423, "pin_locked"))
+        self.assertEqual(self.login("newpass99").status_code, 400)
+
+    def test_weak_new_password(self):
+        self.assertEqual(self.reset(password="abc").json()["code"], "bad_password")
+
+    def test_forgot_page_and_login_link(self):
+        self.assertEqual(self.client.get("/forgot-password/").status_code, 200)
+        self.assertContains(self.client.get("/login/"), "/forgot-password/")
+
+    def test_login_accepts_plus91_and_spaces(self):
+        r = self.client.post("/api/login/", {"phone": "+91 98111 22233", "password": "pass1234"}, content_type=J)
+        self.assertEqual(r.status_code, 200)
+
+
+# ======================================================================= voice check: 15 s numbers
+class VoiceWindowTests(TestCase):
+    def setUp(self):
+        self.acct = make_account()
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=J)
+        VoiceProfile.objects.create(account=self.acct, embedding=[1, 0, 0, 0], samples=3, threshold=0.40)
+
+    def attempt(self, similarity, spoken=None, fresh=True):
+        ch = self.client.get("/api/voice/challenge/").json() if fresh else None
+        spoken = (ch["digits"] if ch else "") if spoken is None else spoken
+        with patch.object(voice, "embed_signal", return_value=vec(similarity)), \
+             patch.object(voice, "transcribe_digits", return_value=spoken):
+            return self.client.post("/api/voice/verify/", {"audio": clip()}).json()
+
+    def test_numbers_last_fifteen_seconds(self):
+        ch = self.client.get("/api/voice/challenge/").json()
+        self.assertEqual(ch["seconds"], 15)
+        s = self.client.session
+        self.assertLessEqual(s["voice_challenge"]["exp"] - time.time(), 15 + views.CHALLENGE_GRACE + 1)
+        s["voice_challenge"]["exp"] = time.time() - 1; s.save()          # the 15 s (+ upload time) ran out
+        with patch.object(voice, "embed_signal", return_value=vec(0.9)), \
+             patch.object(voice, "transcribe_digits", return_value=ch["digits"]):
+            r = self.client.post("/api/voice/verify/", {"audio": clip()}).json()
+        self.assertEqual(r["code"], "challenge_expired")
+
+    def test_a_new_number_replaces_the_old_one(self):
+        old = self.client.get("/api/voice/challenge/").json()["digits"]
+        self.client.get("/api/voice/challenge/")
+        r = self.attempt(0.9, spoken=old, fresh=False)
+        self.assertNotEqual(r["code"], "verified")
+
+    def test_noise_never_locks_the_owner_out(self):
+        for _ in range(8):
+            self.assertEqual(self.attempt(0.9, spoken="")["code"], "no_digits")
+        self.assertEqual(VoiceProfile.objects.get(account=self.acct).failed_attempts, 0)
+        self.assertTrue(self.attempt(0.9)["ok"])
+
+    def test_just_under_the_line_is_never_accepted(self):
+        for _ in range(3):                                   # retrying can't sneak a voice in any more
+            self.assertEqual(self.attempt(0.38)["code"], "voice_mismatch")
+        self.assertFalse(self.client.get("/api/voice/status/").json()["verified"])
+
+    def test_old_low_personal_line_is_raised_to_the_floor(self):
+        VoiceProfile.objects.filter(account=self.acct).update(threshold=0.32)       # saved by older code
+        self.assertEqual(self.attempt(0.36)["code"], "voice_mismatch")
+        self.assertTrue(self.attempt(0.45)["ok"])
+
+    def test_a_voice_closer_to_another_account_is_rejected(self):
+        # Aniket's voiceprint is on his own account; his clip scores 0.45 against Hunar's
+        # print (above the line!) but 0.80 against his own -> it is Aniket, not Hunar.
+        aniket = make_account(phone="9000000002")
+        VoiceProfile.objects.create(account=aniket, embedding=[0, 1, 0, 0], samples=3, threshold=0.40)
+        clip_vec = np.array([0.45, 0.80, 0.0, 0.0])
+        ch = self.client.get("/api/voice/challenge/").json()
+        with patch.object(voice, "embed_signal", return_value=clip_vec), \
+             patch.object(voice, "transcribe_digits", return_value=ch["digits"]):
+            r = self.client.post("/api/voice/verify/", {"audio": clip()}).json()
+        self.assertEqual(r["code"], "voice_mismatch")
+        self.assertTrue(self.attempt(0.9)["ok"])                       # the real owner still gets in
+
+    def test_mostly_noise_is_rejected_and_not_counted(self):
+        self.client.get("/api/voice/challenge/")
+        r = self.client.post("/api/voice/verify/", {"audio": clip(pad=0.5, noise=0.05, amplitude=0.04)}).json()
+        self.assertEqual(r["code"], "audio_noisy")
+        self.assertEqual(VoiceProfile.objects.get(account=self.acct).failed_attempts, 0)
+
+    def test_one_voice_cannot_protect_two_accounts(self):
+        other = make_account(phone="9000000002")
+        VoiceProfile.objects.create(account=other, embedding=[1, 0, 0, 0], samples=3, threshold=0.40)
+        VoiceProfile.objects.filter(account=self.acct).delete()
+        with patch.object(voice, "embed_signal", side_effect=[vec(0.95), vec(0.9), vec(0.93)]):
+            r = self.client.post("/api/voice/enroll/", {"audio": [clip(), clip(), clip()]}).json()
+        self.assertEqual(r["code"], "voice_taken")
+
+    def test_speech_to_noise_measure(self):
+        rate = voice.SAMPLE_RATE
+        tone = 0.2 * np.sin(2 * np.pi * 220 * np.arange(2 * rate) / rate)
+        clean = np.concatenate([np.zeros(rate // 2), tone, np.zeros(rate // 2)]) + np.random.default_rng(1).normal(0, 0.001, 3 * rate)
+        noise = np.random.default_rng(2).normal(0, 0.05, 3 * rate)
+        self.assertGreater(voice.speech_to_noise_db(clean), 30)
+        self.assertLess(voice.speech_to_noise_db(noise), voice.MIN_SNR_DB)
+
+    def test_wrong_digits_report_what_was_heard(self):
+        r = self.attempt(0.9, spoken="111111")
+        self.assertEqual((r["code"], r["heard"]), ("phrase_mismatch", "1 1 1 1 1 1"))
+
+    def test_number_words_are_understood(self):
+        self.assertEqual(voice.words_to_digits("four seven two nine one three"), "472913")
+        self.assertEqual(voice.words_to_digits("char saat do nau ek teen"), "472913")
+        self.assertEqual(voice.words_to_digits("चार सात दो नौ एक तीन"), "472913")
+        self.assertEqual(voice.words_to_digits("4 double 7, 2"), "4772")
+        self.assertEqual(voice.words_to_digits("४ 7 २"), "472")
+
+    def test_fastest_correct_engine_wins(self):
+        slow_wrong = lambda wav: (time.sleep(0.3), "999999")[1]      # noqa: E731
+        right = lambda wav: "472913"                                 # noqa: E731
+        with patch.object(voice, "stt_engines", return_value=[slow_wrong, right]):
+            t = time.time()
+            self.assertEqual(voice.heard_digits(b"x", "472913"), "472913")
+            self.assertLess(time.time() - t, 0.25)
+
+    def test_one_engine_down_the_other_still_answers(self):
+        def down(wav):
+            raise voice.VoiceError("stt_unavailable", "down")
+        with patch.object(voice, "stt_engines", return_value=[down, lambda wav: "472913"]):
+            self.assertEqual(voice.heard_digits(b"x", "472913"), "472913")
+        with patch.object(voice, "stt_engines", return_value=[down, down]):
+            with self.assertRaises(voice.VoiceError):
+                voice.heard_digits(b"x", "472913")
+        with patch.object(voice, "stt_engines", return_value=[lambda w: "472914", lambda w: "000000"]):
+            self.assertEqual(voice.heard_digits(b"x", "472913"), "472914")      # closest answer
+
+
+# ======================================================================= real data on every page
+@override_settings(VOICE_REQUIRED=False)
+class RealDataTests(TestCase):
+    def setUp(self):
+        self.acct = make_account()
+        Contact.objects.create(account=self.acct, name="Swiggy", upi_id="swiggy@upi", kind="merchant")
+        Contact.objects.create(account=self.acct, name="EchoMint Gold", upi_id="gold@echomint", kind="gold")
+        Contact.objects.create(account=self.acct, name="Jio Prepaid", upi_id="jio@recharge", kind="recharge")
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=J)
+
+    def pay(self, who, amount, reference=""):
+        r = self.client.post("/api/payments/", {"recipient": who, "amount": amount, "reference": reference}, content_type=J).json()
+        if r.get("code") == "needs_confirmation":
+            r = self.client.post(f"/api/payments/{r['payment_id']}/confirm/", {}, content_type=J).json()
+        return r
+
+    @override_settings(GOLD_PRICE_PER_GRAM="15000")
+    def test_gold_comes_from_real_purchases(self):
+        self.assertEqual(self.client.get("/api/me/").json()["gold"]["grams"], "0.0000")
+        self.assertTrue(self.pay("EchoMint Gold", 300)["ok"])
+        g = self.client.get("/api/me/").json()["gold"]
+        self.assertEqual((g["invested"], g["grams"], g["price_per_gram"]), ("300.00", "0.0200", "15000"))
+
+    def test_card_is_derived_from_the_account_and_freeze_really_blocks(self):
+        card = self.client.get("/api/me/").json()["card"]
+        self.assertEqual(card["last4"], self.acct.account_number[-4:])
+        self.assertRegex(card["valid_till"], r"^\d\d/\d\d$")
+        self.assertTrue(self.client.post("/api/card/freeze/", {"frozen": True}, content_type=J).json()["frozen"])
+        self.assertEqual(self.pay("Swiggy", 200)["code"], "card_frozen")      # shop payment blocked
+        self.assertTrue(self.pay("Aman", 200)["ok"])                         # people still fine
+        self.client.post("/api/card/freeze/", {"frozen": False}, content_type=J)
+        self.assertTrue(self.pay("Swiggy", 200)["ok"])
+        events = set(AuditLog.objects.values_list("event", flat=True))
+        self.assertTrue({"card_frozen", "card_unfrozen"} <= events)
+
+    def test_recharge_number_is_saved_with_the_payment(self):
+        self.assertEqual(self.pay("Jio Prepaid", 199, "12345")["code"], "bad_reference")
+        self.assertTrue(self.pay("Jio Prepaid", 199, "9811122233")["ok"])
+        row = self.client.get("/api/history/").json()["payments"][0]
+        self.assertEqual(row["reference"], "9811122233")
+
+
+class SmallPaymentSafetyTests(TestCase):
+    def setUp(self):
+        self.acct = make_account(balance="20000")
+
+    def send_yes(self, amount):
+        r = services.initiate_payment(self.acct, "Aman", amount)
+        if r["code"] == "needs_confirmation":
+            return services.confirm_payment(self.acct, r["payment_id"])
+        return r
+
+    def test_many_small_yes_payments_need_the_pin_after_the_hourly_cap(self):
+        for _ in range(3):
+            self.assertEqual(self.send_yes(490)["code"], "success")       # 1,470 by voice alone
+        r = services.initiate_payment(self.acct, "Aman", 100)              # would pass 1,500
+        self.assertEqual(r["code"], "needs_pin")
+        self.assertFalse(services.confirm_payment(self.acct, r["payment_id"])["ok"])   # "yes" is not enough
+        self.assertTrue(services.confirm_payment(self.acct, r["payment_id"], pin="1234")["ok"])
+
+    def test_a_lone_ji_or_ha_does_not_send_money(self):
+        session = {}
+        intents.handle(self.acct, "send 200 to Aman", "en-IN", session)
+        for word in ("ji", "ha", "जी"):
+            out = intents.handle(self.acct, word, "hi-IN", session)
+            self.assertFalse(out and "success" in str(out.get("reply", "")).lower())
+        self.assertFalse(Payment.objects.filter(status=Payment.Status.SUCCESS).exists())
+        intents.handle(self.acct, "haan", "hi-IN", session)
+        self.assertTrue(Payment.objects.filter(status=Payment.Status.SUCCESS).exists())
+
+
+
+class LiveDemoTests(TestCase):
+    """What the judges will see: owner in, friend out, lock, and no Wi-Fi surprises."""
+
+    def setUp(self):
+        self.acct = make_account()
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=J)
+        VoiceProfile.objects.create(account=self.acct, embedding=[1, 0, 0, 0], samples=3, threshold=0.42)
+        friend = make_account(phone="9000000002")
+        VoiceProfile.objects.create(account=friend, embedding=[0, 1, 0, 0], samples=3, threshold=0.42)
+
+    def attempt(self, vector, stt=None):
+        ch = self.client.get("/api/voice/challenge/").json()
+        side = {"side_effect": stt} if stt else {"return_value": ch["digits"]}
+        with patch.object(voice, "embed_signal", return_value=np.array(vector)), \
+             patch.object(voice, "transcribe_digits", **side):
+            return self.client.post("/api/voice/verify/", {"audio": clip()})
+
+    def test_owner_in_friend_out_then_lock_and_repeat(self):
+        self.assertTrue(self.attempt([0.8, 0.1, 0, 0]).json()["ok"])                  # owner
+        self.assertTrue(self.client.get("/api/voice/status/").json()["verified"])
+        self.assertTrue(self.client.post("/api/voice/lock/", content_type=J).json()["ok"])
+        self.assertFalse(self.client.get("/api/voice/status/").json()["verified"])
+        self.assertEqual(self.attempt([0.1, 0.8, 0, 0]).json()["code"], "voice_mismatch")   # friend
+        self.assertTrue(self.attempt([0.8, 0.1, 0, 0]).json()["ok"])                  # owner again
+
+    @override_settings(VOICE_SHOW_SCORES=True)
+    def test_scores_for_the_judges(self):
+        sc = self.attempt([0.8, 0.1, 0, 0]).json()["scores"]
+        self.assertEqual(sc["needed"], 42); self.assertGreater(sc["you"], sc["needed"]); self.assertLess(sc["other"], 20)
+
+    def test_scores_hidden_by_default(self):
+        self.assertNotIn("scores", self.attempt([0.8, 0.1, 0, 0]).json())
+
+    def test_wifi_down_clear_owner_still_gets_in_but_borderline_does_not(self):
+        down = voice.VoiceError("stt_unavailable", "down")
+        self.assertTrue(self.attempt([0.9, 0.05, 0, 0], stt=down).json()["ok"])        # clear match
+        self.assertTrue(AuditLog.objects.filter(event="voice_digits_skipped").exists())
+        self.client.post("/api/voice/lock/", content_type=J)
+        r = self.attempt([0.46, 0.3, 0.8, 0], stt=down)                                  # just over the line
+        self.assertEqual((r.status_code, r.json()["code"]), (503, "stt_unavailable"))
+
+    @override_settings(VOICE_ALLOW_NO_STT=False)
+    def test_wifi_fallback_can_be_switched_off(self):
+        r = self.attempt([0.9, 0.05, 0, 0], stt=voice.VoiceError("stt_unavailable", "down"))
+        self.assertEqual(r.status_code, 503)
+
+
+@override_settings(VOICE_REQUIRED=False)
+class ContactManagementTests(TestCase):
+    def setUp(self):
+        self.acct = make_account()
+        self.client.post("/api/login/", {"phone": "9000000001", "password": "pass1234"}, content_type=J)
+
+    def cid(self, name):
+        return next(c["id"] for c in self.client.get("/api/me/").json()["contacts"] if c["name"] == name)
+
+    def test_add_then_remove_and_history_stays(self):
+        self.assertTrue(self.client.post("/api/contacts/", {"name": "Sunita", "upi_id": "sunita@okhdfc"}, content_type=J).json()["ok"])
+        r = self.client.post("/api/payments/", {"recipient": "Sunita", "amount": 100}, content_type=J).json()
+        self.client.post(f"/api/payments/{r['payment_id']}/confirm/", {}, content_type=J)
+        r = self.client.post(f"/api/contacts/{self.cid('Sunita')}/remove/", content_type=J).json()
+        self.assertEqual(r["code"], "contact_removed")
+        self.assertNotIn("Sunita", [c["name"] for c in self.client.get("/api/me/").json()["contacts"]])
+        self.assertEqual(self.client.get("/api/history/").json()["payments"][0]["recipient"], "Sunita")   # history kept
+        self.assertEqual(self.client.post("/api/payments/", {"recipient": "Sunita", "amount": 50}, content_type=J).json()["code"],
+                         "recipient_not_found")                                                           # can't pay any more
+
+    def test_pending_payment_to_removed_contact_is_cancelled(self):
+        r = self.client.post("/api/payments/", {"recipient": "Aman", "amount": 100}, content_type=J).json()
+        self.client.post(f"/api/contacts/{self.cid('Aman')}/remove/", content_type=J)
+        self.assertEqual(Payment.objects.get(pk=r["payment_id"]).status, Payment.Status.CANCELLED)
+
+    def test_builtin_payees_and_other_peoples_contacts_are_protected(self):
+        Contact.objects.create(account=self.acct, name="Adani Electricity", upi_id="a@billpay", kind="biller")
+        self.assertEqual(self.client.post(f"/api/contacts/{self.cid('Adani Electricity')}/remove/", content_type=J).json()["code"], "contact_builtin")
+        other = make_account(phone="9000000002")
+        theirs = other.contacts.get(name="Aman").id
+        self.assertEqual(self.client.post(f"/api/contacts/{theirs}/remove/", content_type=J).json()["code"], "contact_not_found")
+        self.assertTrue(Contact.objects.filter(pk=theirs).exists())
+
+    def test_removing_needs_the_voice_check(self):
+        with override_settings(VOICE_REQUIRED=True):
+            self.assertEqual(self.client.post(f"/api/contacts/{self.cid('Aman')}/remove/", content_type=J).status_code, 403)

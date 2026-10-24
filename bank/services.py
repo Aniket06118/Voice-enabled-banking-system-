@@ -24,6 +24,7 @@ from .categories import categorize
 from .models import Account, AuditLog, Payment
 
 PIN_THRESHOLD = Decimal("500")      # below this: voice confirm; at/above: PIN
+VOICE_ONLY_HOURLY_CAP = Decimal("1500")  # more than this in "yes"-only payments within an hour -> PIN
 PENDING_TTL = timedelta(minutes=5)  # an unconfirmed payment expires
 MAX_PIN_ATTEMPTS = 3
 PIN_LOCK_DURATION = timedelta(minutes=15)
@@ -49,6 +50,14 @@ def required_auth(amount: Decimal) -> str:
     return Payment.Auth.PIN if amount >= PIN_THRESHOLD else Payment.Auth.VOICE_CONFIRM
 
 
+def _voice_only_last_hour(account) -> Decimal:
+    """Money sent in the last hour with only a spoken/tapped 'yes' (no PIN)."""
+    return account.payments.filter(
+        status=Payment.Status.SUCCESS, auth_used=Payment.Auth.VOICE_CONFIRM,
+        completed_at__gte=timezone.now() - timedelta(hours=1),
+    ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+
+
 def _audit(account, event, **detail):
     AuditLog.objects.create(account=account, event=event, detail=detail)
 
@@ -61,11 +70,11 @@ def _spent_today(account) -> Decimal:
     return total or Decimal("0")
 
 
-# Common phonetic mappings for Indic scripts to English contact names
+# Common phonetic mappings for Indic scripts to English contact names (from Aniket)
 _INDIC_NAME_MAP = {
     # Hindi / Devanagari
     "राहुल": "rahul", "वर्मा": "verma", "वर्र्मा": "verma", "शर्मा": "sharma",
-    "अमन": "aman", "मॉम": "mom", "माँ": "mom", "मां": "mom", "माता": "mom", "अम्मी": "mom",
+    "अमन": "aman", "मॉम": "mom", "माँ": "mom", "मां": "mom", "माता": "mom", "अम्मी": "mom", "मम्मी": "mom",
     # Tamil
     "ராகுல்": "rahul", "வர்மா": "verma", "சர்மா": "sharma", "அமன்": "aman", "அம்மா": "mom",
     # Telugu
@@ -80,42 +89,38 @@ _INDIC_NAME_MAP = {
 def _normalize_name(name: str) -> str:
     """Normalize input name, translating any known Indic script words into Latin equivalents."""
     cleaned = " ".join(str(name or "").lower().split())
-    tokens = []
-    for token in cleaned.split():
-        tokens.append(_INDIC_NAME_MAP.get(token, token))
-    return " ".join(tokens)
+    return " ".join(_INDIC_NAME_MAP.get(t, t) for t in cleaned.split())
 
 
 def resolve_contact(account: Account, name: str) -> list:
-    """Find contacts matching a spoken name (supports English and Indic scripts).
-    Returns a list:
+    """Find contacts matching a spoken name (English or Indian scripts).
     0 items = not found, 1 = match, 2+ = ambiguous ("which Rahul?")."""
     raw_wanted = " ".join(str(name or "").lower().split())
     norm_wanted = _normalize_name(name)
     contacts = list(account.contacts.all())
 
-    # 1. Exact match against normalized or raw name
-    for target in (norm_wanted, raw_wanted):
+    for target in (norm_wanted, raw_wanted):          # 1. exact match
         exact = [c for c in contacts if c.name.lower() == target]
         if len(exact) == 1:
             return exact
 
-    # 2. Word/sub-token match
-    def match(c, target):
+    def match(c, target):                              # 2. word / sub-token match
+        if not target:
+            return False
         c_words = c.name.lower().split()
         t_words = target.split()
-        return (target in c.name.lower() or
-                all(w in c_words for w in t_words) or
-                all(w in c.name.lower() for w in t_words))
+        return (target in c.name.lower() or all(w in c_words for w in t_words)
+                or all(w in c.name.lower() for w in t_words))
 
-    matches = [c for c in contacts if match(c, norm_wanted) or match(c, raw_wanted)]
-    return matches
+    return [c for c in contacts if match(c, norm_wanted) or match(c, raw_wanted)]
 
 
 # ------------------------------------------------------------- step 1: initiate
 
-def initiate_payment(account: Account, recipient_name, amount, idempotency_key=None) -> dict:
-    """Validate a payment request and create it as PENDING (no money moves yet)."""
+def initiate_payment(account: Account, recipient_name, amount, idempotency_key=None, reference="") -> dict:
+    """Validate a payment request and create it as PENDING (no money moves yet).
+    `reference` is what the customer typed for a bill or recharge (consumer number,
+    mobile number). It is saved with the payment and shown on the statement."""
     if not recipient_name or not str(recipient_name).strip():
         return _result(False, "missing_recipient",
                        "I need to know who to pay. Please tell me the recipient's name.")
@@ -145,6 +150,15 @@ def initiate_payment(account: Account, recipient_name, amount, idempotency_key=N
                        f"I found more than one match: {', '.join(names)}. Which one do you mean?",
                        options=names)
     contact = matches[0]
+    reference = re.sub(r"[^0-9A-Za-z \-/]", "", str(reference or "")).strip()[:40]
+    if contact.kind == "recharge" and reference and not re.fullmatch(r"[6-9]\d{9}", reference):
+        return _result(False, "bad_reference", "Please enter a 10-digit mobile number to recharge.")
+
+    # A frozen card blocks shop and service payments (the card's job), never UPI to people or bills.
+    if contact.kind == "merchant" and account.card_frozen:
+        return _result(False, "card_frozen",
+                       f"Your card is frozen, so payments to {contact.name} are blocked. "
+                       "You can unfreeze it on the Cards page.")
 
     if amount > account.balance:
         return _result(False, "insufficient_balance",
@@ -154,12 +168,16 @@ def initiate_payment(account: Account, recipient_name, amount, idempotency_key=N
                        f"This would go over your daily limit of {fmt(account.daily_limit)}.")
 
     auth = required_auth(amount)
+    if auth == Payment.Auth.VOICE_CONFIRM and _voice_only_last_hour(account) + amount > VOICE_ONLY_HOURLY_CAP:
+        # Many small "yes" payments add up: past the hourly cap, the PIN is needed again.
+        auth = Payment.Auth.PIN
     try:
         payment = Payment.objects.create(
             account=account, contact=contact, recipient_name=contact.name,
             upi_id=contact.upi_id, amount=amount, auth_required=auth,
             idempotency_key=idempotency_key or None,
             category=categorize(contact.name, contact.kind),
+            reference=reference,
         )
     except IntegrityError:  # two identical requests raced each other
         existing = account.payments.filter(idempotency_key=idempotency_key).first()
@@ -359,6 +377,26 @@ def _valid_uuid(value) -> bool:
 
 # ------------------------------------------------------------- read-only queries
 
+def gold_holding(account: Account) -> dict:
+    """Digital gold = every completed payment to the account's gold contact, at the
+    bank's gold price (settings.GOLD_PRICE_PER_GRAM)."""
+    from django.conf import settings
+    price = Decimal(str(settings.GOLD_PRICE_PER_GRAM))
+    invested = account.payments.filter(status=Payment.Status.SUCCESS, contact__kind="gold") \
+        .aggregate(t=Sum("amount"))["t"] or Decimal("0")
+    invested = _money(invested)
+    return {"price_per_gram": str(price), "invested": str(invested),
+            "grams": str((invested / price).quantize(Decimal("0.0001"))) if price else "0"}
+
+
+def card_details(account: Account) -> dict:
+    """The virtual debit card, derived from the account itself (nothing made up)."""
+    issued = timezone.localtime(account.created_at)
+    return {"last4": account.account_number[-4:],
+            "valid_till": f"{issued.month:02d}/{(issued.year + 5) % 100:02d}",
+            "frozen": bool(account.card_frozen)}
+
+
 def get_user_details(account: Account) -> dict:
     return {
         "name": account.full_name,
@@ -369,7 +407,10 @@ def get_user_details(account: Account) -> dict:
         "currency": account.currency,
         "daily_limit": str(account.daily_limit),
         "spent_today": str(_spent_today(account)),
-        "contacts": [{"name": c.name, "upi_id": c.upi_id, "kind": c.kind} for c in account.contacts.all()],
+        "member_since": timezone.localtime(account.created_at).date().isoformat(),
+        "card": card_details(account),
+        "gold": gold_holding(account),
+        "contacts": [{"id": c.id, "name": c.name, "upi_id": c.upi_id, "kind": c.kind} for c in account.contacts.all()],
     }
 
 
@@ -390,6 +431,7 @@ def get_history(account: Account, limit=20, recipient=None, days=None) -> list:
             "timestamp": p.created_at.isoformat(),
             "verified_with": p.auth_used or None,
             "category": p.category,
+            "reference": p.reference or "",
         }
         for p in qs[: int(limit)]
     ]
@@ -476,10 +518,15 @@ NOTICE_TEXT = {
     "voice_fallback_pin": lambda d: "You signed in with your PIN instead of your voice",
     "payment_expired": lambda d: "A payment request expired before it was confirmed",
     "contact_added": lambda d: f"{d.get('name', 'A contact')} was added to your contacts",
+    "contact_removed": lambda d: f"{d.get('name', 'A contact')} was removed from your contacts",
     "signed_up": lambda d: "Welcome to EchoMint! Your account is ready",
+    "password_reset": lambda d: "Your password was reset using your PIN",
+    "card_frozen": lambda d: "Your card was frozen",
+    "card_unfrozen": lambda d: "Your card was unfrozen",
 }
-NOTICE_LEVEL = {"contact_added": "info", "signed_up": "info", "wrong_pin": "warn", "pin_locked": "warn", "voice_failed": "warn",
-                "pin_changed": "info", "daily_limit_changed": "info"}
+NOTICE_LEVEL = {"contact_added": "info", "contact_removed": "info", "signed_up": "info", "wrong_pin": "warn", "pin_locked": "warn", "voice_failed": "warn",
+                "pin_changed": "info", "daily_limit_changed": "info", "password_reset": "warn",
+                "card_frozen": "info", "card_unfrozen": "info"}
 
 
 def notifications(acct, limit=8) -> list:
@@ -504,41 +551,110 @@ DEFAULT_PAYEES = [  # every new account can pay these bills from day one
 WEAK_PINS = {"0000", "1111", "1234", "4321", "1212", "0123", "9999", "2580"}
 
 
-def create_customer(full_name, phone, password, pin) -> dict:
-    """Open a new account (sign up). Returns {"ok", "phone", ...}."""
-    import secrets as _secrets
+def normalize_phone(raw) -> str:
+    """'+91 98111-22233', '09811122233', '919811122233' -> '9811122233'."""
+    return re.sub(r"\D", "", str(raw or ""))[-10:]
+
+
+def masked_phone(phone: str) -> str:
+    return "+91 ••••• •" + phone[-4:]
+
+
+def password_problem(password: str):
+    """The password rule (same at sign-up and reset). Returns an error result or None."""
+    if len(str(password or "")) < 6:
+        return _result(False, "bad_password", "Your password needs at least 6 characters.")
+    return None
+
+
+def validate_signup(full_name, phone, password, pin) -> dict:
+    """Check every sign-up field WITHOUT creating anything (the phone is verified first)."""
     from django.contrib.auth import get_user_model
     User = get_user_model()
     full_name = " ".join(str(full_name or "").split())
-    phone = re.sub(r"\D", "", str(phone or ""))[-10:]
+    phone = normalize_phone(phone)
     password = str(password or "")
     pin = str(pin or "")
     if not (2 <= len(full_name) <= 80):
         return _result(False, "bad_name", "Please enter your full name.")
     if not re.fullmatch(r"[6-9]\d{9}", phone):
         return _result(False, "bad_phone", "Please enter a 10-digit Indian mobile number.")
-    if len(password) < 6:
-        return _result(False, "bad_password", "Your password needs at least 6 characters.")
+    problem = password_problem(password)
+    if problem:
+        return problem
     if not re.fullmatch(r"\d{4}", pin):
         return _result(False, "bad_pin", "Your PIN must be exactly 4 digits.")
     if pin in WEAK_PINS or len(set(pin)) == 1:
         return _result(False, "weak_pin", "That PIN is too easy to guess. Please choose another.")
     if User.objects.filter(username=phone).exists() or Account.objects.filter(phone=phone).exists():
         return _result(False, "phone_taken", "An account with this phone number already exists. Please log in.")
+    return _result(True, "valid", "OK", full_name=full_name, phone=phone)
+
+
+def open_account(full_name, phone, password_hash, pin_hash) -> dict:
+    """Create the user + account from already-validated details. Only HASHES of the
+    password and PIN are passed in."""
+    import secrets as _secrets
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
     with transaction.atomic():
-        user = User.objects.create_user(username=phone, password=password)
+        if User.objects.filter(username=phone).exists() or Account.objects.filter(phone=phone).exists():
+            return _result(False, "phone_taken", "An account with this phone number already exists. Please log in.")
+        user = User.objects.create_user(username=phone)
+        user.password = password_hash
+        user.save()
         number = None
         while number is None or Account.objects.filter(account_number=number).exists():
             number = str(_secrets.randbelow(9 * 10**11) + 10**11)
         acct = Account(user=user, full_name=full_name, phone=phone, account_number=number,
-                       bank_name="Lotus Bank", balance=STARTER_BALANCE)
-        acct.set_pin(pin)
+                       bank_name="Lotus Bank", balance=STARTER_BALANCE, pin_hash=pin_hash)
         acct.save()
         from .models import Contact
         for name, upi, kind in DEFAULT_PAYEES:
             Contact.objects.create(account=acct, name=name, upi_id=upi, kind=kind)
-        _audit(acct, "signed_up")
+        _audit(acct, "signed_up", phone_verified=True)
     return _result(True, "signed_up", f"Welcome to EchoMint, {full_name.split()[0]}!", phone=phone)
+
+
+def create_customer(full_name, phone, password, pin) -> dict:
+    """Validate + open in one go (used when phone verification is switched off)."""
+    from django.contrib.auth.hashers import make_password
+    checked = validate_signup(full_name, phone, password, pin)
+    if not checked["ok"]:
+        return checked
+    return open_account(checked["full_name"], checked["phone"], make_password(str(password)), make_password(str(pin)))
+
+
+def reset_password(phone, pin, new_password) -> dict:
+    """Forgot password: the registered mobile number + the account's 4-digit PIN prove
+    it's the owner, then the password is replaced. Wrong PINs count towards the normal
+    PIN lockout (3 tries, then 15 minutes), so the PIN can't be guessed. Changing the
+    password also signs out every other session of this user (Django does this)."""
+    problem = password_problem(new_password)
+    if problem:
+        return problem
+    wrong = _result(False, "wrong_details", "That mobile number and PIN don't match an account.")
+    acct = Account.objects.select_related("user").filter(phone=normalize_phone(phone)).first()
+    if acct is None or not acct.pin_hash:
+        return wrong                       # same answer as a wrong PIN: nobody can probe for accounts
+    checked = verify_pin(acct, pin)
+    if not checked["ok"]:
+        return checked if checked["code"] == "pin_locked" else wrong
+    acct.user.set_password(str(new_password))
+    acct.user.save()
+    _audit(acct, "password_reset")
+    return _result(True, "password_reset", "Your password has been changed. Please log in with the new one.",
+                   phone=acct.phone)
+
+
+def set_card_frozen(acct, frozen: bool) -> dict:
+    acct = type(acct).objects.get(pk=acct.pk)
+    acct.card_frozen = bool(frozen)
+    acct.save(update_fields=["card_frozen"])
+    _audit(acct, "card_frozen" if acct.card_frozen else "card_unfrozen")
+    return _result(True, "card_frozen" if acct.card_frozen else "card_unfrozen",
+                   "Your card is frozen." if acct.card_frozen else "Your card is active again.",
+                   frozen=acct.card_frozen)
 
 
 def add_contact(acct, name, upi_id) -> dict:
@@ -554,3 +670,26 @@ def add_contact(acct, name, upi_id) -> dict:
     Contact.objects.create(account=acct, name=name, upi_id=upi_id, kind="person")
     _audit(acct, "contact_added", name=name)
     return _result(True, "contact_added", f"{name} has been added to your contacts.")
+
+
+REMOVABLE_KINDS = ("person", "merchant")     # bills, recharges and gold are built-in payees
+
+
+def remove_contact(acct, contact_id) -> dict:
+    """Delete one of the customer's own contacts. Past payments keep their own copy of
+    the name and UPI ID, so the statement and analytics don't change. A payment still
+    waiting for a 'yes' or PIN to this contact is cancelled."""
+    from .models import Contact
+    try:
+        contact = Contact.objects.get(pk=int(contact_id), account=acct)
+    except (Contact.DoesNotExist, ValueError, TypeError):
+        return _result(False, "contact_not_found", "That contact wasn't found.")
+    if contact.kind not in REMOVABLE_KINDS:
+        return _result(False, "contact_builtin", f"{contact.name} is a built-in payee and can't be removed.")
+    name = contact.name
+    with transaction.atomic():
+        acct.payments.filter(contact=contact, status=Payment.Status.PENDING).update(
+            status=Payment.Status.CANCELLED, failure_reason="Contact removed")
+        contact.delete()
+        _audit(acct, "contact_removed", name=name)
+    return _result(True, "contact_removed", f"{name} has been removed from your contacts.")
